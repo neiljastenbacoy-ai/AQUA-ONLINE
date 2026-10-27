@@ -36,7 +36,9 @@ Future<void> bootFirebase() async {
       await Firebase.initializeApp();
     }
     _ready = true;
-  } catch (_) {
+    debugPrint('[AQUA tracking] Firebase ready — live GPS sync active');
+  } catch (e) {
+    debugPrint('[AQUA tracking] Firebase init failed: $e');
     _ready = false; // not configured / offline — simulation mode
   }
 }
@@ -85,6 +87,7 @@ class RiderLocationBroadcaster {
   String? _riderId;
   String? _orderId;
   Position? _last;
+  bool _firstWriteDone = false;
 
   bool get running => _riderId != null;
 
@@ -94,14 +97,35 @@ class RiderLocationBroadcaster {
     if (_riderId == riderId) return;
     stop();
     _riderId = riderId;
-    _gps = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: 10,
-      ),
-    ).listen((p) => _last = p);
+    _beginGps();
     // Firestore writes are throttled independently of GPS fixes.
     _flush = Timer.periodic(const Duration(seconds: 5), (_) => _push());
+  }
+
+  Future<void> _beginGps() async {
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        // Fired from a login tap, so the system dialog can surface here.
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        debugPrint('[AQUA tracking] location permission denied — rider GPS off');
+        return;
+      }
+      _gps = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best,
+          distanceFilter: 10,
+        ),
+      ).listen(
+        (p) => _last = p,
+        onError: (e) => debugPrint('[AQUA tracking] GPS stream error: $e'),
+      );
+    } catch (e) {
+      debugPrint('[AQUA tracking] could not start GPS: $e');
+    }
   }
 
   /// Update which order the rider is currently delivering (optional marker).
@@ -128,7 +152,12 @@ class RiderLocationBroadcaster {
         'ts': DateTime.now().millisecondsSinceEpoch,
         'orderId': _orderId,
       }, SetOptions(merge: true));
-    } catch (_) {
+      if (_firstWriteDone == false) {
+        _firstWriteDone = true;
+        debugPrint('[AQUA tracking] first GPS write to Firestore ok');
+      }
+    } catch (e) {
+      debugPrint('[AQUA tracking] Firestore write failed: $e');
       // transient Firestore errors are fine — next tick retries
     }
   }
