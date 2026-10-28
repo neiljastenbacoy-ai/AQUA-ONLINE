@@ -20,8 +20,6 @@ late final AppState appState;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Safe: no-ops into simulation mode when Firebase isn't configured yet.
-  await bootFirebase();
   appState = AppState();
   // Register both Google fonts up front so the raw fontFamily references in
   // tx() ('Poppins' headings, 'Nunito Sans' body) resolve to the real fonts.
@@ -29,6 +27,9 @@ void main() async {
   GoogleFonts.nunitoSans();
   // Real system notifications (Android status bar / heads-up).
   PhoneNotify.init();
+  // Don't block first frame on Firebase — it finishes in the background and
+  // the tracking layer activates when ready.
+  unawaited(bootFirebase());
   runApp(const AquaApp());
 }
 
@@ -118,7 +119,7 @@ class _RootShellState extends State<RootShell> {
     // Keep the splash visible briefly, but route only after saved state loads.
     Future.wait<void>([
       appState.init(),
-      Future<void>.delayed(const Duration(milliseconds: 1900)),
+      Future<void>.delayed(const Duration(milliseconds: 1100)),
     ]).then((_) {
       if (!mounted) return;
       if (appState.screen == 'splash') {

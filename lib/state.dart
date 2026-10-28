@@ -81,6 +81,9 @@ class AppState extends ChangeNotifier {
   /* ================= boot / persistence ================= */
 
   Future<void> init() async {
+    // Firebase must be up before the sync layer attaches; this runs inside
+    // the splash window so it never delays the first frame.
+    await bootFirebase();
     prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(KEY);
     if (raw != null) {

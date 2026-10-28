@@ -324,7 +324,7 @@ ScreenView authAdminView(BuildContext context, AppState s) {
           ]),
         ),
         const SizedBox(width: 12),
-        SizedBox(width: 150, child: SvgPicture.string(storeSvg(), fit: BoxFit.contain)),
+        SizedBox(width: 150, child: storeArt),
       ]),
     ),
     Positioned(left: 0, right: 0, bottom: -1, child: Wave(height: 50, w2: p.bg)),
@@ -450,7 +450,7 @@ ScreenView adashView(BuildContext context, AppState s) {
           ]),
         ),
         const SizedBox(width: 12),
-        SizedBox(width: 150, child: SvgPicture.string(storeSvg(), fit: BoxFit.contain)),
+        SizedBox(width: 150, child: storeArt),
       ]),
     ),
     Positioned(left: 0, right: 0, bottom: -1, child: Wave(height: 50, w2: p.bg)),
@@ -2628,9 +2628,18 @@ class _StationFormState extends State<_StationForm> {
                 initial: _lat != null && _lng != null ? LatLng(_lat!, _lng!) : null,
               );
               if (picked != null) {
+                // Offer the resolved address if the field is empty.
+                final line = [
+                  picked.street,
+                  picked.brgy,
+                  picked.city,
+                ].where((s) => s.isNotEmpty).join(', ');
+                if (line.isNotEmpty && _addr.text.trim().isEmpty) {
+                  _addr.text = line;
+                }
                 setState(() {
-                  _lat = picked.latitude;
-                  _lng = picked.longitude;
+                  _lat = picked.point.latitude;
+                  _lng = picked.point.longitude;
                   _pinChanged = true;
                 });
               }

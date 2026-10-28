@@ -37,14 +37,21 @@ class Gal extends StatelessWidget {
   final double h;
   const Gal(this.type, {super.key, this.h = 70});
 
+  // SVG parsing is the expensive part — cache the finished widget per
+  // type+size so scrolling long lists doesn't re-parse artwork.
+  static final Map<String, Widget> _cache = {};
+
   @override
   Widget build(BuildContext context) {
-    final w = h * 100 / 140;
-    return SizedBox(
-      height: h,
-      width: w,
-      child: SvgPicture.string(gallonSvg(type), fit: BoxFit.contain),
-    );
+    final key = '$type-$h';
+    return _cache.putIfAbsent(key, () {
+      final w = h * 100 / 140;
+      return SizedBox(
+        height: h,
+        width: w,
+        child: SvgPicture.string(gallonSvg(type), fit: BoxFit.contain),
+      );
+    });
   }
 }
 
@@ -150,3 +157,7 @@ class AquaLogo extends StatelessWidget {
     ]);
   }
 }
+
+/// Pre-parsed hero artworks — build once, reuse everywhere.
+final Widget scooterArt = SvgPicture.string(scooterSvg(), fit: BoxFit.contain);
+final Widget storeArt = SvgPicture.string(storeSvg(), fit: BoxFit.contain);

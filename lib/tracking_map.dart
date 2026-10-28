@@ -6,9 +6,12 @@
  * - simulatedRiderPos  : simulation-mode rider position (no Firebase needed)
  */
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import 'models.dart';
@@ -50,10 +53,54 @@ LatLng? simulatedRiderPos({
 
 /* ================= pin picker ================= */
 
-/// Opens the full-screen map picker. Returns the chosen coordinate, or null
-/// if the user backed out.
-Future<LatLng?> openPinPickerPage(BuildContext context, {LatLng? initial}) {
-  return Navigator.of(context).push<LatLng>(
+/// A confirmed map pin plus the street address resolved from it
+/// (empty strings when the reverse geocode found nothing).
+class DroppedPin {
+  final LatLng point;
+  final String street, brgy, city;
+  const DroppedPin(this.point, {this.street = '', this.brgy = '', this.city = ''});
+}
+
+/// Reverse geocode a coordinate via OSM Nominatim (free, no API key,
+/// same data source as the map tiles). Returns null on any failure —
+/// callers fall back to just the coordinates.
+Future<DroppedPin?> reverseGeocode(LatLng p) async {
+  try {
+    final uri = Uri.https('nominatim.openstreetmap.org', '/reverse', {
+      'lat': p.latitude.toStringAsFixed(7),
+      'lon': p.longitude.toStringAsFixed(7),
+      'format': 'json',
+      'zoom': '18',
+      'addressdetails': '1',
+    });
+    final res = await http.get(uri, headers: {
+      // Nominatim usage policy requires an identifying User-Agent.
+      'User-Agent': 'AQUA-Water-Ordering/1.0 (com.example.aqua)',
+    }).timeout(const Duration(seconds: 8));
+    if (res.statusCode != 200) return null;
+    final a = (jsonDecode(res.body) as Map<String, dynamic>)['address']
+        as Map<String, dynamic>?;
+    if (a == null) return null;
+    String pick(List<String> keys) =>
+        keys.map((k) => a[k]).firstWhere((v) => v != null && v.toString().isNotEmpty,
+            orElse: () => '') as String;
+    final house = pick(['house_number']);
+    final road = pick(['road', 'pedestrian', 'residential', 'footway']);
+    final street = [if (house.isNotEmpty) house, if (road.isNotEmpty) road]
+        .join(' ')
+        .trim();
+    final brgy = pick(['suburb', 'village', 'neighbourhood', 'quarter', 'city_district']);
+    final city = pick(['city', 'municipality', 'town', 'county']);
+    return DroppedPin(p, street: street, brgy: brgy, city: city);
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Opens the full-screen map picker. Returns the chosen coordinate with the
+/// resolved address, or null if the user backed out.
+Future<DroppedPin?> openPinPickerPage(BuildContext context, {LatLng? initial}) {
+  return Navigator.of(context).push<DroppedPin>(
     MaterialPageRoute(builder: (_) => _PinPickerPage(initial: initial)),
   );
 }
@@ -69,6 +116,7 @@ class _PinPickerPageState extends State<_PinPickerPage> {
   final MapController _map = MapController();
   late LatLng _center = widget.initial ?? const LatLng(8.6069, 124.8222);
   String _hint = 'Drag the map so the pin sits on the delivery spot.';
+  bool _resolving = false;
 
   Future<void> _useMyLocation() async {
     try {
@@ -164,9 +212,20 @@ class _PinPickerPageState extends State<_PinPickerPage> {
               top: false,
               child: VGap([
                 Text(_hint, style: tx(context, 13, color: p.muted, h: 1.4)),
-                Btn('Confirm pin location',
-                    icon: 'pin',
-                    onPressed: () => Navigator.of(context).pop(_center)),
+                Btn(
+                  _resolving ? 'Looking up address…' : 'Confirm pin location',
+                  icon: 'pin',
+                  onPressed: _resolving
+                      ? null
+                      : () async {
+                          setState(() => _resolving = true);
+                          final pin = await reverseGeocode(_center);
+                          if (!mounted) return;
+                          Navigator.of(context).pop(
+                            pin ?? DroppedPin(_center),
+                          );
+                        },
+                ),
               ]),
             ),
           ),

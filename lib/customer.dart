@@ -91,7 +91,7 @@ class _SplashBodyState extends State<_SplashBody> with TickerProviderStateMixin 
       AnimationController(vsync: this, duration: const Duration(seconds: 3))
         ..repeat();
   late final AnimationController _load =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))
         ..forward();
 
   @override
@@ -821,17 +821,27 @@ class _AddressFormState extends State<_AddressForm> {
               context,
               initial: _lat != null && _lng != null ? LatLng(_lat!, _lng!) : null,
             );
-            if (picked != null) {
-              setState(() {
-                _lat = picked.latitude;
-                _lng = picked.longitude;
-              });
+            if (picked == null) return;
+            // Auto-fill address fields the customer hasn't typed yet.
+            if (picked.street.isNotEmpty && _street.text.trim().isEmpty) {
+              _street.text = picked.street;
             }
+            if (picked.brgy.isNotEmpty && _brgy.text.trim().isEmpty) {
+              _brgy.text = picked.brgy;
+            }
+            if (picked.city.isNotEmpty && _city.text.trim().isEmpty) {
+              _city.text = picked.city;
+            }
+            setState(() {
+              _lat = picked.point.latitude;
+              _lng = picked.point.longitude;
+            });
           }),
       Text(
         _lat == null
             ? 'No map pin yet — add one so you can watch your rider approach on the live map.'
-            : 'Pin set (${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)}). You\'ll see the rider move toward this spot.',
+            : 'Pin set (${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)}).'
+                '${_street.text.isEmpty && _brgy.text.isEmpty ? ' Add the street and barangay below.' : ' Address filled from the map — edit if needed.'}',
         style: tx(context, 13, color: _lat == null ? p.muted : p.ok, h: 1.4),
       ),
       GestureDetector(
@@ -1416,11 +1426,19 @@ class _LiveTrackCard extends StatefulWidget {
 class _LiveTrackCardState extends State<_LiveTrackCard> {
   StreamSubscription<RiderFix?>? _sub;
   RiderFix? _fix;
+  String? _watchingRid;
 
   @override
   void initState() {
     super.initState();
+    _watchOrderRider();
+  }
+
+  void _watchOrderRider() {
     final rid = widget.o.riderId;
+    _sub?.cancel();
+    _sub = null;
+    _watchingRid = rid;
     final stream = watchRider(rid ?? '');
     if (stream != null) {
       _sub = stream.listen((f) {
@@ -1440,6 +1458,12 @@ class _LiveTrackCardState extends State<_LiveTrackCard> {
     final p = Pal.of(context);
     final s = widget.s;
     final o = widget.o;
+    // The rider may get assigned while this screen is open (same Order object
+    // is mutated in place), so re-check the subscription every rebuild.
+    if (o.riderId != _watchingRid) {
+      _fix = null;
+      _watchOrderRider();
+    }
     final station = LatLng(s.station.lat!, s.station.lng!);
     final dest = LatLng(o.address.lat!, o.address.lng!);
     final live = (_fix != null && _fix!.isFresh) ? _fix!.point : null;
@@ -1472,8 +1496,12 @@ class _LiveTrackCardState extends State<_LiveTrackCard> {
         const SizedBox(height: 10),
         Text(
           live != null
-              ? 'Showing your rider\'s real GPS position.'
-              : 'Showing the estimated rider position. Connect Firebase to see real GPS.',
+              ? 'Showing your rider\'s real GPS position — updates every few seconds.'
+              : o.riderId == null
+                  ? 'Waiting for a rider to be assigned. The map will switch to live tracking as soon as one is on the way.'
+                  : (firebaseReady
+                      ? 'Rider found — waiting for their GPS. Make sure the rider app is open and moving.'
+                      : 'Showing the estimated rider position.'),
           style: tx(context, 13, color: p.muted, h: 1.4),
         ),
       ]),

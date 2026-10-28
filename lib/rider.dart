@@ -192,7 +192,7 @@ ScreenView authRiderView(BuildContext context, AppState s) {
         width: 150,
         child: Align(
           alignment: Alignment.bottomCenter,
-          child: SvgPicture.string(scooterSvg(), fit: BoxFit.contain),
+          child: scooterArt,
         ),
       ),
     ]),
@@ -417,7 +417,7 @@ ScreenView rdashView(BuildContext context, AppState s) {
         width: 150,
         child: Align(
           alignment: Alignment.bottomCenter,
-          child: SvgPicture.string(scooterSvg(), fit: BoxFit.contain),
+          child: scooterArt,
         ),
       ),
     ]),
