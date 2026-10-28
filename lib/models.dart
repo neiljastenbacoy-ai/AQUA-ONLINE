@@ -312,11 +312,13 @@ class InvLog {
 class AppSettings {
   String theme; // system|light|dark
   bool notify, autoDeliver;
-  AppSettings({this.theme = 'system', this.notify = true, this.autoDeliver = true});
+  // autoDeliver is a demo convenience — online orders advance by real rider
+  // and admin actions, so it defaults off on fresh installs.
+  AppSettings({this.theme = 'system', this.notify = true, this.autoDeliver = false});
   factory AppSettings.fromJson(json) => AppSettings(
       theme: (json['theme'] ?? 'system') as String,
       notify: (json['notify'] ?? true) as bool,
-      autoDeliver: (json['autoDeliver'] ?? true) as bool);
+      autoDeliver: (json['autoDeliver'] ?? false) as bool);
   Map<String, dynamic> toJson() => {'theme': theme, 'notify': notify, 'autoDeliver': autoDeliver};
 }
 

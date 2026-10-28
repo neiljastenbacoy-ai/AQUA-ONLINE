@@ -244,9 +244,10 @@ class _LoginForm extends StatefulWidget {
 }
 
 class _LoginFormState extends State<_LoginForm> {
-  late final _email = TextEditingController(text: CUSTOMER_SEED_EMAIL);
-  late final _pw = TextEditingController(text: CUSTOMER_SEED_PASS);
+  final _email = TextEditingController();
+  final _pw = TextEditingController();
   bool _show = false;
+  bool _busy = false;
   String _err = '';
 
   @override
@@ -264,13 +265,12 @@ class _LoginFormState extends State<_LoginForm> {
       AquaField('Password', _pw, obscure: !_show, eyeToggle: true,
           onEye: () => setState(() => _show = !_show)),
       ErrLine(_err),
-      Btn('Log In', onPressed: () {
-        final err = s.loginCustomer(_email.text, _pw.text);
-        if (err != null) {
-          setState(() => _err = err);
-        }
+      Btn(_busy ? 'Logging in…' : 'Log In', onPressed: _busy ? null : () async {
+        setState(() { _busy = true; _err = ''; });
+        final err = await s.loginCustomer(_email.text, _pw.text);
+        if (mounted && err != null) setState(() { _err = err; _busy = false; });
       }),
-      _hintBox(context, 'Demo account is filled in. Accounts and orders are saved only on this device.'),
+      _hintBox(context, 'New here? Create an account on the Register tab. Your account syncs across all devices.'),
     ]);
   }
 }
@@ -283,11 +283,12 @@ class _RegisterForm extends StatefulWidget {
 }
 
 class _RegisterFormState extends State<_RegisterForm> {
-  late final _name = TextEditingController();
-  late final _phone = TextEditingController();
-  late final _email = TextEditingController();
-  late final _pw = TextEditingController();
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  final _email = TextEditingController();
+  final _pw = TextEditingController();
   bool _show = false;
+  bool _busy = false;
   String _err = '';
 
   @override
@@ -309,11 +310,10 @@ class _RegisterFormState extends State<_RegisterForm> {
       AquaField('Password (at least 4 characters)', _pw, obscure: !_show, eyeToggle: true,
           onEye: () => setState(() => _show = !_show)),
       ErrLine(_err),
-      Btn('Create Account', onPressed: () {
-        final err = s.registerCustomer(_name.text, _phone.text, _email.text, _pw.text);
-        if (err != null) {
-          setState(() => _err = err);
-        }
+      Btn(_busy ? 'Creating account…' : 'Create Account', onPressed: _busy ? null : () async {
+        setState(() { _busy = true; _err = ''; });
+        final err = await s.registerCustomer(_name.text, _phone.text, _email.text, _pw.text);
+        if (mounted && err != null) setState(() { _err = err; _busy = false; });
       }),
     ]);
   }
@@ -1102,8 +1102,8 @@ class _CheckoutDock extends StatelessWidget {
     return Column(mainAxisSize: MainAxisSize.min, children: [
       DockTotal(main: 'Total', small: '(${pl(cc, 'Gallon')})', amount: peso(tot)),
       const SizedBox(height: 10),
-      Btn('Place Order', icon: 'truck', onPressed: () {
-        final e = s.placeOrder();
+      Btn('Place Order', icon: 'truck', onPressed: () async {
+        final e = await s.placeOrder();
         if (e != null) {
           _coErr.value = e;
           s.toast(e);

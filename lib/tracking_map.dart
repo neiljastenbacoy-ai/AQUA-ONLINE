@@ -352,9 +352,14 @@ class _RouteStopMapState extends State<RouteStopMap> {
       ...widget.stops.map((s) => s.point),
     ];
     if (pts.length < 2) return;
+    // When one stop is focused ("View on Map"), frame the route from the
+    // station to THAT pin up close; otherwise frame everything.
+    final focused = widget.stops.where((s) => s.focused).toList();
+    final target = (focused.isNotEmpty ? focused.map((s) => s.point).toList() : pts);
     final ok = _map.fitCamera(CameraFit.coordinates(
-      coordinates: pts,
-      padding: const EdgeInsets.all(44),
+      coordinates: [widget.station, ...target],
+      maxZoom: 17,
+      padding: const EdgeInsets.all(56),
     ));
     _fittedFor = ok ? widget.stops.length : null;
     if (!ok && _fitRetries < 10) {

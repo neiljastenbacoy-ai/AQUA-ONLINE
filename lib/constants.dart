@@ -149,11 +149,8 @@ const List<List<String>> SLIDES_DATA = [
   ],
 ];
 
-const String CUSTOMER_SEED_EMAIL = 'maria@example.com';
-const String CUSTOMER_SEED_NAME = 'Maria Santos';
-const String CUSTOMER_SEED_PHONE = '0917 555 0142';
-const String CUSTOMER_SEED_PASS = 'aqua1234';
-const String RIDER_SEED_EMAIL = 'juan@aqua.ph';
+// Admin is the one built-in account (no registration path); customers
+// register themselves and riders are created by the admin in Users.
 const String ADMIN_SEED_EMAIL = 'admin@aqua.ph';
 const String ADMIN_SEED_PASS = 'aqua1234';
 

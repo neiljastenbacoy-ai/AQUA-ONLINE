@@ -276,7 +276,7 @@ class _AdminLoginFormState extends State<_AdminLoginForm> {
           onEye: () => setState(() => _obscure = !_obscure)),
       const SizedBox(height: 8),
       ErrLine(_err),
-      Btn('Log In', onPressed: () {
+      Btn('Log In', onPressed: () async {
         final e = _email.text.trim().toLowerCase();
         setState(() => _err = '');
         if (!isEmail(e)) {
@@ -287,7 +287,7 @@ class _AdminLoginFormState extends State<_AdminLoginForm> {
           setState(() => _err = 'Enter your password (at least 4 characters).');
           return;
         }
-        final err = s.loginAdmin(e, _pass.text);
+        final err = await s.loginAdmin(e, _pass.text);
         if (err != null) setState(() => _err = err);
       }),
       const SizedBox(height: 6),

@@ -8,6 +8,7 @@ import 'constants.dart';
 import 'firebase_boot.dart';
 import 'models.dart';
 import 'notify.dart';
+import 'online.dart';
 
 /// Full app state — a 1:1 port of the HTML global `S` + domain helpers + actions.
 class AppState extends ChangeNotifier {
@@ -87,8 +88,10 @@ class AppState extends ChangeNotifier {
         _loadJson(raw);
       } catch (_) {}
     }
-    migrate();
     _savedLoaded = true;
+    // Online: attach Firestore listeners (no-op when Firebase isn't set up).
+    await OnlineSync.i.start(this);
+    migrate();
     // session validity: role must have a matching signed-in user
     if (session == true &&
         ((role == 'rider' && rider == null) ||
@@ -194,11 +197,15 @@ class AppState extends ChangeNotifier {
       });
       prefs.setString(KEY, json);
     } catch (_) {}
+    // Online mirror: push the diff to Firestore (no-op when offline).
+    OnlineSync.i.requestPush();
   }
 
-  void resetAll() {
+  /// Admin "Reset data" — clears local state AND the shared Firestore data.
+  Future<void> resetAll() async {
     noSave = true;
     prefs.remove(KEY);
+    await OnlineSync.i.wipeAll();
     // fresh instance state
     user = null; session = false; role = 'customer'; rider = null;
     riders = []; riderId = ''; admin = null; anotifs = []; rnotifs = [];
@@ -214,6 +221,7 @@ class AppState extends ChangeNotifier {
     authRole = 'customer'; authTab = 'login';
     screen = 'auth'; stack = ['auth']; slide = 0;
     noSave = false;
+    save(); // re-seeds the world doc with product/station defaults
     notifyListeners();
   }
 
@@ -315,161 +323,6 @@ class AppState extends ChangeNotifier {
     screen = stack.last;
     save();
     notifyListeners();
-  }
-
-  /* ================= demo seeding ================= */
-
-  void seedDemo() {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    addresses = [
-      Address(id: uid(), label: 'Home', street: 'Blk 5 Lot 12, Sampaguita St.', brgy: 'Brgy. San Isidro', city: '', landmark: 'Green gate, beside the sari-sari store', def: true),
-      Address(id: uid(), label: 'Work', street: 'Unit 4B, Rizal Avenue', brgy: 'Brgy. Poblacion', city: '', landmark: 'Ask the guard at the lobby', def: false),
-    ];
-    Order past(int daysAgo, int hour, List<OrderItem> items, int status, int n, [bool cancelled = false]) {
-      final d = DateTime.fromMillisecondsSinceEpoch(now - daysAgo * DAY);
-      final t = DateTime(d.year, d.month, d.day, hour, 15).millisecondsSinceEpoch;
-      final o = Order(
-        id: oid(t, n),
-        items: items,
-        total: items.fold<double>(0, (a, i) => a + priceOf(i.type) * i.qty),
-        address: AddrLine(label: 'Home', line: addresses[0].line),
-        time: 'asap', note: '', pay: 'cod',
-        createdAt: t,
-        stamps: cancelled ? [t, t + 90000] : [t, t + 120000, t + 720000, t + 1680000, t + 2460000],
-        owner: CUSTOMER_SEED_EMAIL,
-        cust: Customer(name: CUSTOMER_SEED_NAME, phone: CUSTOMER_SEED_PHONE),
-        status: status,
-        cancelled: cancelled,
-      );
-      return o;
-    }
-    final seeded = [
-      past(3, 15, [OrderItem(type: 'refill', qty: 2)], 4, 2),
-      past(10, 10, [OrderItem(type: 'refill', qty: 3), OrderItem(type: 'buy', qty: 1)], 4, 1),
-      past(21, 9, [OrderItem(type: 'buy', qty: 1)], 1, 3, true),
-    ];
-    final others = orders.where((o) => o.owner == 'other').toList();
-    orders = [...seeded, ...others];
-    seq = 3;
-    notifs = [
-      Notif(id: uid(), type: 'order', orderId: orders[0].id, title: 'Delivered', body: 'Your order ${orders[0].id} was delivered. Enjoy fresh water.', ts: now - 3 * DAY + 2460000, read: true),
-      Notif(id: uid(), type: 'info', title: 'Time for a refill?', body: 'It has been 3 days since your last refill. Order again in a few taps.', ts: now - 2 * 3600000, read: false),
-      Notif(id: uid(), type: 'info', title: 'Welcome to AQUA', body: 'Choose Refill Gallon if you have an empty gallon, or Buy Gallon for a new filled one.', ts: now - 4 * DAY, read: true),
-    ];
-    cart = [];
-    draft.addressId = addresses[0].id;
-    draft.time = 'asap'; draft.note = ''; draft.qty = 1; draft.type = 'refill'; draft.pay = 'cod';
-    user = Account(name: CUSTOMER_SEED_NAME, email: CUSTOMER_SEED_EMAIL, phone: CUSTOMER_SEED_PHONE);
-    save();
-  }
-
-  void seedStation() {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if (riders.isEmpty) {
-      riders = [
-        Rider(id: 'r1', name: 'Juan Dela Cruz', phone: '+63 917 555 0110', email: RIDER_SEED_EMAIL, vehicle: 'Motorcycle', plate: 'ABC 1234', available: 'available', active: true),
-        Rider(id: 'r2', name: 'Ramon Reyes', phone: '+63 918 555 0199', email: 'ramon@aqua.ph', vehicle: 'Tricycle', plate: 'TRY 5521', available: 'available', active: true),
-        Rider(id: 'r3', name: 'Carlo Bautista', phone: '+63 919 555 0142', email: 'carlo@aqua.ph', vehicle: 'E-bike', plate: '', available: 'break', active: true),
-      ];
-    } else if (riders.first.email == RIDER_SEED_EMAIL && !riders.any((r) => r.id == 'r2')) {
-      riders.addAll([
-        Rider(id: 'r2', name: 'Ramon Reyes', phone: '+63 918 555 0199', email: 'ramon@aqua.ph', vehicle: 'Tricycle', plate: 'TRY 5521', available: 'available', active: true),
-        Rider(id: 'r3', name: 'Carlo Bautista', phone: '+63 919 555 0142', email: 'carlo@aqua.ph', vehicle: 'E-bike', plate: '', available: 'break', active: true),
-      ]);
-    }
-    final juan = riders.where((r) => r.email == RIDER_SEED_EMAIL).firstOrNull ?? riders.first;
-
-    Order mk(int n, String name, String phone, String line, List<OrderItem> items, int status, double agoMin,
-        {String pay = 'cod', String note = '', String time = 'asap'}) {
-      final t = now - (agoMin * 60000).round();
-      final st = <int?>[t, t + 2 * 60000, t + 9 * 60000, t + 18 * 60000, t + 30 * 60000].sublist(0, status + 1);
-      return Order(
-          id: oid(t, n),
-          items: items,
-          total: items.fold<double>(0, (a, i) => a + priceOf(i.type) * i.qty),
-          prices: {'refill': priceOf('refill'), 'buy': priceOf('buy')},
-          address: AddrLine(label: 'Home', line: line),
-          time: time, note: note, pay: pay,
-          createdAt: t, status: status, cancelled: false, stamps: st,
-          owner: 'other', cust: Customer(name: name, phone: phone),
-          riderId: juan.id);
-    }
-
-    if (!orders.any((o) => o.owner == 'other')) {
-      final b1 = [OrderItem(type: 'buy', qty: 1)];
-      final list = <Order>[
-        mk(124, 'Ana Reyes', '+63 915 222 3344', 'Purok 5, Villanueva', b1, 2, 40),
-        mk(125, 'John Dela Cruz', '+63 918 777 1020', 'Purok 6, Villanueva', [OrderItem(type: 'refill', qty: 2)], 3, 25),
-        mk(127, 'Carlo Mendoza', '+63 920 555 0188', 'Purok 2, Villanueva', [OrderItem(type: 'refill', qty: 4)], 2, 15, note: 'Blue gate. Ring the bell twice.'),
-        mk(128, 'Lyn Tan', '+63 927 410 6620', 'Purok 8, Villanueva', [OrderItem(type: 'refill', qty: 1), OrderItem(type: 'buy', qty: 2)], 1, 8, pay: 'gcash', time: 'Today, 4:00 PM–6:00 PM'),
-        mk(126, 'Maria Santos', '+63 912 345 6789', 'Purok 3, Villanueva, Misamis Oriental', [OrderItem(type: 'refill', qty: 3), OrderItem(type: 'buy', qty: 1)], 0, 4),
-      ];
-      list[4].riderId = null;
-      final c = mk(123, 'Joy Pascual', '+63 921 640 3355', 'Purok 9, Villanueva', [OrderItem(type: 'refill', qty: 1)], 1, (4 * DAY / 60000) + 60);
-      c.cancelled = true;
-      c.issue = Issue(type: 'Customer not available', text: 'Nobody answered at the gate after 10 minutes.', ts: c.createdAt + 25 * 60000);
-      list.add(c);
-      orders.addAll(list);
-      rnotifs = [
-        Notif(id: uid(), rid: juan.id, type: 'order', orderId: list[3].id, title: 'New delivery assigned', body: 'Lyn Tan · ${list[3].id} · ${peso(list[3].total)}', ts: now - 8 * 60000, read: false),
-        Notif(id: uid(), rid: juan.id, type: 'order', orderId: list[2].id, title: 'New delivery assigned', body: 'Carlo Mendoza · ${list[2].id} · ${peso(list[2].total)}', ts: now - 15 * 60000, read: false),
-        Notif(id: uid(), rid: juan.id, type: 'info', title: 'Welcome to the AQUA rider app', body: 'Start a delivery from the Assigned tab and mark it delivered when you hand over the gallons.', ts: now - 6 * DAY, read: true),
-        ...rnotifs,
-      ];
-    }
-
-    if (!orders.any((o) => o.seedH)) {
-      const C = [
-        ['Rosa Lim', '+63 916 300 4411', 'Purok 1'],
-        ['Ana Reyes', '+63 915 222 3344', 'Purok 5'],
-        ['Ben Aquino', '+63 919 880 2290', 'Purok 4'],
-        ['Mark Ocampo', '+63 922 100 7788', 'Purok 7'],
-        ['Lyn Tan', '+63 927 410 6620', 'Purok 8'],
-        ['Joy Pascual', '+63 921 640 3355', 'Purok 9'],
-      ];
-      final P = [
-        [OrderItem(type: 'refill', qty: 2)],
-        [OrderItem(type: 'refill', qty: 3), OrderItem(type: 'buy', qty: 1)],
-        [OrderItem(type: 'buy', qty: 1)],
-        [OrderItem(type: 'refill', qty: 5)],
-        [OrderItem(type: 'refill', qty: 1), OrderItem(type: 'buy', qty: 2)],
-        [OrderItem(type: 'refill', qty: 4)],
-      ];
-      final ids = riders.take(3).map((r) => r.id).toList();
-      var n = 200;
-      for (int d = 0; d < 14; d++) {
-        final cnt = 1 + (d % 3);
-        for (int k = 0; k < cnt; k++) {
-          final cu = C[(d + k * 2) % 6], it = P[(d * 2 + k) % 6];
-          final o = mk(n++, cu[0], cu[1], '${cu[2]}, Villanueva', it, 4, (d * 1440 + 180 + k * 170).toDouble(), pay: (d + k) % 3 == 0 ? 'gcash' : 'cod');
-          o.riderId = ids[(d + k) % ids.length];
-          o.seedH = true;
-          orders.add(o);
-        }
-      }
-    }
-
-    for (final o in orders) {
-      if (o.riderId == null && o.owner != 'other' && (o.status >= 4 || o.cancelled)) {
-        o.riderId = riders[hash(o.id) % riders.length].id;
-      }
-    }
-    if (invLogList.isEmpty) {
-      invLogList = [
-        InvLog(ts: now - 5 * DAY, kind: 'restock', item: 'water', delta: 300, note: 'Tank refilled'),
-        InvLog(ts: now - 9 * DAY, kind: 'restock', item: 'containers', delta: 50, note: 'New container delivery'),
-      ];
-    }
-    autoAssignWaiting();
-    save();
-  }
-
-  void seedRider() {
-    seedStation();
-    final r = riders.where((x) => x.email == RIDER_SEED_EMAIL).firstOrNull ?? riders.first;
-    rider = r;
-    riderId = r.id;
-    save();
   }
 
   /* ================= stock ================= */
@@ -698,7 +551,7 @@ class AppState extends ChangeNotifier {
     toast('Items added to your cart');
   }
 
-  String? placeOrder() {
+  Future<String?> placeOrder() async {
     if (cart.isEmpty) {
       goScreen('cart');
       return null;
@@ -710,9 +563,10 @@ class AppState extends ChangeNotifier {
     final blk = placeBlock();
     if (blk.isNotEmpty) return '$blk. Please update your cart.';
     final now = DateTime.now().millisecondsSinceEpoch;
-    seq += 1;
+    final n = await OnlineSync.i.nextSeq();
+    seq = n;
     final o = Order(
-      id: oid(now, seq),
+      id: oid(now, n),
       items: cart.map((i) => OrderItem(type: i.type, qty: i.qty)).toList(),
       total: sumItems(cart),
       prices: {'refill': priceOf('refill'), 'buy': priceOf('buy')},
@@ -866,61 +720,79 @@ class AppState extends ChangeNotifier {
 
   /* ================= auth ================= */
 
-  String? loginCustomer(String emailRaw, String pw) {
+  Future<String?> loginCustomer(String emailRaw, String pw) async {
     final email = emailRaw.trim().toLowerCase();
     if (!isEmail(email)) return 'Enter a valid email address.';
     if (pw.length < 4) return 'Enter your password (at least 4 characters).';
-    if (user != null && user!.email == email) {
-      session = true;
-    } else if (email == CUSTOMER_SEED_EMAIL) {
-      seedDemo();
-      session = true;
-    } else {
-      return 'No account found for that email. Create one on the Register tab.';
+    final doc = await OnlineSync.i.fetchUser(email);
+    if (doc == null) {
+      return OnlineSync.i.active
+          ? 'No account found for that email. Create one on the Register tab.'
+          : 'Cannot reach the online database. Check your internet connection.';
     }
+    if ((doc['pass'] ?? '') != pw) return 'Incorrect password for that account.';
+    user = Account.fromJson(doc);
+    addresses = ((doc['addresses'] ?? []) as List).map((x) => Address.fromJson(x)).toList();
+    notifs = ((doc['notifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
+    session = true;
     role = 'customer';
+    OnlineSync.i.sessionChanged();
+    save();
     goScreen('home', fresh: true);
     toast('Welcome back, ${firstName()}');
     return null;
   }
 
-  String? registerCustomer(String name, String phone, String emailRaw, String pw) {
+  Future<String?> registerCustomer(String name, String phone, String emailRaw, String pw) async {
     final email = emailRaw.trim().toLowerCase();
     if (name.trim().length < 2) return 'Enter your full name.';
     if (phone.replaceAll(RegExp(r'\D'), '').length < 10) return 'Enter a mobile number with at least 10 digits.';
     if (!isEmail(email)) return 'Enter a valid email address.';
     if (pw.length < 4) return 'Choose a password with at least 4 characters.';
+    if (await OnlineSync.i.userExists(email)) {
+      return 'An account with that email already exists. Log in instead.';
+    }
     user = Account(name: name.trim(), phone: phone.trim(), email: email);
     role = 'customer';
     session = true;
     addresses = [];
-    orders = orders.where((o) => o.owner == 'other').toList();
     cart = [];
-    seq = 0;
     draft.addressId = null; draft.time = 'asap'; draft.note = ''; draft.qty = 1; draft.type = 'refill'; draft.pay = 'cod';
     notifs = [];
+    await OnlineSync.i.createUserDoc(email: email, name: name.trim(), phone: phone.trim(), pass: pw);
     addNotif(type: 'info', title: 'Welcome to AQUA', body: 'Choose Refill Gallon if you have an empty gallon, or Buy Gallon for a new filled one.');
+    OnlineSync.i.sessionChanged();
+    save();
     goScreen('home', fresh: true);
     toast('Account created');
     return null;
   }
 
-  String? loginRider(String emailRaw, String pw) {
+  Future<String?> loginRider(String emailRaw, String pw) async {
     final email = emailRaw.trim().toLowerCase();
     if (!isEmail(email)) return 'Enter a valid email address.';
     if (pw.length < 4) return 'Enter your password (at least 4 characters).';
-    var rr = riders.where((r) => r.email == email).firstOrNull;
-    if (rr == null && email == RIDER_SEED_EMAIL) {
-      seedStation();
+    // Online lookup first (riders live in Firestore); local list as fallback
+    // for the brief window before the riders snapshot arrives.
+    final hit = await OnlineSync.i.fetchRiderByEmail(email);
+    Rider? rr;
+    String rid = '';
+    if (hit != null) {
+      rid = hit.key;
+      rr = Rider.fromJson(hit.value);
+      rr.id = rid;
+    } else {
       rr = riders.where((r) => r.email == email).firstOrNull;
+      rid = rr?.id ?? '';
     }
     if (rr == null) return 'No rider account found for that email. Ask the station admin to add your account.';
     if (rr.active == false) return 'This rider account is deactivated. Please contact the station.';
     if (pw != rr.pass) return 'Incorrect password for that rider account.';
     rider = rr;
-    riderId = rr.id;
+    riderId = rid;
     role = 'rider';
     session = true;
+    save();
     goScreen('rdash', fresh: true);
     // No-op until Firebase is configured (simulation mode otherwise).
     RiderLocationBroadcaster.instance.start(riderId: riderId);
@@ -928,7 +800,7 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  String? loginAdmin(String emailRaw, String pw) {
+  Future<String?> loginAdmin(String emailRaw, String pw) async {
     final email = emailRaw.trim().toLowerCase();
     if (!isEmail(email)) return 'Enter a valid email address.';
     if (pw.length < 4) return 'Enter your password (at least 4 characters).';
@@ -937,17 +809,8 @@ class AppState extends ChangeNotifier {
     admin = ad;
     role = 'admin';
     session = true;
-    seedStation();
-    if (anotifs.isEmpty) {
-      final ns = (orders.where((o) => !o.cancelled && o.status < 4).toList()
-            ..sort((a, b) => b.createdAt.compareTo(a.createdAt)))
-          .take(3)
-          .toList();
-      for (var i = 0; i < ns.length; i++) {
-        anotifs.add(Notif(id: uid(), type: 'order', orderId: ns[i].id, title: 'New order', body: '${custOf(ns[i]).name} · ${ns[i].id} · ${peso(ns[i].total)}', ts: ns[i].createdAt, read: i > 1));
-      }
-      anotifs.add(Notif(id: uid(), type: 'info', title: 'Welcome to AQUA Admin', body: 'Track orders, assign riders and keep stock up to date from here.', ts: DateTime.now().millisecondsSinceEpoch - 5 * DAY, read: true));
-    }
+    OnlineSync.i.sessionChanged();
+    save();
     goScreen('adash', fresh: true);
     toast('Welcome back, Admin');
     return null;
@@ -958,6 +821,7 @@ class AppState extends ChangeNotifier {
     authTab = 'login';
     session = false;
     RiderLocationBroadcaster.instance.stop();
+    OnlineSync.i.sessionChanged();
     goScreen('auth', fresh: true);
   }
 

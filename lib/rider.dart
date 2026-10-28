@@ -66,8 +66,10 @@ class RCard extends StatelessWidget {
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Gal(o.items[0].type, h: compact ? 44 : 70),
-            const SizedBox(width: 10),
+            if (o.items.isNotEmpty) ...[
+              Gal(o.items[0].type, h: compact ? 44 : 70),
+              const SizedBox(width: 10),
+            ],
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(o.id, style: oidStyle(context)),
@@ -259,9 +261,10 @@ class _RiderLoginForm extends StatefulWidget {
 }
 
 class _RiderLoginFormState extends State<_RiderLoginForm> {
-  late final TextEditingController _email = TextEditingController(text: 'juan@aqua.ph');
-  late final TextEditingController _pw = TextEditingController(text: 'aqua1234');
+  final TextEditingController _email = TextEditingController();
+  final TextEditingController _pw = TextEditingController();
   bool _obscure = true;
+  bool _busy = false;
   String _err = '';
 
   @override
@@ -281,9 +284,10 @@ class _RiderLoginFormState extends State<_RiderLoginForm> {
           eyeToggle: true,
           onEye: () => setState(() => _obscure = !_obscure)),
       ErrLine(_err),
-      Btn('Log In', onPressed: () {
-        final err = s.loginRider(_email.text, _pw.text);
-        if (err != null) setState(() => _err = err);
+      Btn(_busy ? 'Logging in…' : 'Log In', onPressed: _busy ? null : () async {
+        setState(() { _busy = true; _err = ''; });
+        final err = await s.loginRider(_email.text, _pw.text);
+        if (mounted && err != null) setState(() { _err = err; _busy = false; });
       }),
       Container(
         padding: const EdgeInsets.all(12),
@@ -292,7 +296,7 @@ class _RiderLoginFormState extends State<_RiderLoginForm> {
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
-            'Demo rider account is filled in. Rider accounts and deliveries are saved only on this device.',
+            'Rider accounts are created by the station admin in the Admin app.',
             style: tx(context, 13, color: Pal.of(context).muted, h: 1.4)),
       ),
     ], gap: 12);
@@ -608,7 +612,7 @@ ScreenView rdetailView(BuildContext context, AppState s) {
       card(
         background: p.ice,
         child: RowW([
-          Gal(o.items[0].type, h: 70),
+          if (o.items.isNotEmpty) Gal(o.items[0].type, h: 70),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(o.id, style: oidStyle(context, size: 17)),
