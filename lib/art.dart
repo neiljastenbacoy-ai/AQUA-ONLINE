@@ -132,7 +132,7 @@ class SideWave extends StatelessWidget {
   }
 }
 
-/// "AQUA" brand wordmark with the droplet icon.
+/// "AQUARUN" brand wordmark with the droplet icon.
 class AquaLogo extends StatelessWidget {
   final bool lg;
   final Color color;
@@ -147,7 +147,7 @@ class AquaLogo extends StatelessWidget {
     return Row(mainAxisSize: MainAxisSize.min, children: [
       SvgPicture.string(drops, width: ic, height: ic),
       const SizedBox(width: 6),
-      Text('AQUA',
+      Text('AQUARUN',
           style: TextStyle(
               fontFamily: 'Poppins',
               fontWeight: FontWeight.w700,

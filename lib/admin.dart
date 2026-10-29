@@ -3,11 +3,11 @@
    aprofile, asettings + all admin sheets (filter, assign, product, prices,
    restock, adjust, rider form, profile, confirms) and the daily sales chart. */
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -83,61 +83,8 @@ Order? _orderOf(AppState s, String? id) =>
 
 /* ================= small shared widgets ================= */
 
-/// `.active-card` — white card with a colored 5px left border.
-class _AlertCard extends StatelessWidget {
-  final Color left;
-  final String title;
-  final String sub;
-  final VoidCallback onTap;
-  const _AlertCard(
-      {required this.left, required this.title, required this.sub, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final p = Pal.of(context);
-    return GestureDetector(
-      onTap: onTap,
-      // Flutter only allows a borderRadius on a uniform-color border, so the
-      // rounded corners come from a clip (same look as the CSS original).
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: p.shadow,
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: p.card,
-            border: Border(
-              left: BorderSide(color: left, width: 5),
-              top: BorderSide(color: p.line),
-              right: BorderSide(color: p.line),
-              bottom: BorderSide(color: p.line),
-            ),
-          ),
-          child: Row(children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(title,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: tx(context, 15, w: FontWeight.w700)),
-                const SizedBox(height: 1),
-                Text(sub, style: para(context, color: p.muted, size: 13)),
-              ]),
-            ),
-            const SizedBox(width: 10),
-            Ic('chev', size: 18, color: p.muted),
-          ]),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// `.rstat` — 88px stat tile; the dashboard tiles are tappable buttons.
+/// `.rstat` — 88px stat tile used by the 2×2 grids on the other admin screens
+/// (Deliveries, Reports). The overview uses the compact [StatTile] row instead.
 Widget _rstatTile(BuildContext context,
     {String? icon,
     required Color bg,
@@ -146,8 +93,10 @@ Widget _rstatTile(BuildContext context,
     required String label,
     VoidCallback? onTap}) {
   final p = Pal.of(context);
-  return GestureDetector(
+  return TapSurface(
     onTap: onTap,
+    semanticLabel: '$num $label',
+    borderRadius: BorderRadius.circular(18),
     child: Container(
       constraints: const BoxConstraints(minHeight: 88),
       padding: const EdgeInsets.all(14),
@@ -227,15 +176,8 @@ Widget _confirmText(BuildContext context, String pre, String bold, String post) 
 
 /// Small `.ibtn` icon action (copy / call / edit pencil).
 Widget _iconAction(BuildContext context, String icon, VoidCallback onTap,
-    {double size = 40, double iconSize = 20, Color? color}) {
-  return GestureDetector(
-    onTap: onTap,
-    child: SizedBox(
-      width: size,
-      height: size,
-      child: Ic(icon, size: iconSize, color: color ?? Pal.of(context).link),
-    ),
-  );
+    {String? label, Color? color}) {
+  return IconAction(icon, onTap: onTap, color: color, label: label);
 }
 
 /* =====================================================================
@@ -253,44 +195,93 @@ class _AdminLoginFormState extends State<_AdminLoginForm> {
   late final TextEditingController _email =
       TextEditingController(text: widget.s.admin?.email ?? 'admin@aqua.ph');
   late final TextEditingController _pass = TextEditingController(text: 'aqua1234');
+  final FocusNode _emailFocus = FocusNode();
+  final FocusNode _passFocus = FocusNode();
   bool _obscure = true;
+  bool _busy = false;
+  String _emailErr = '';
+  String _passErr = '';
   String _err = '';
 
   @override
   void dispose() {
     _email.dispose();
     _pass.dispose();
+    _emailFocus.dispose();
+    _passFocus.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final e = _email.text.trim().toLowerCase();
+    if (_busy) return;
+    setState(() {
+      _err = '';
+      _emailErr = '';
+      _passErr = '';
+    });
+    if (!isEmail(e)) {
+      setState(() => _emailErr = 'Enter the admin email address.');
+      _emailFocus.requestFocus();
+      return;
+    }
+    if (_pass.text.length < 4) {
+      setState(() => _passErr = 'Enter your password (at least 4 characters).');
+      _passFocus.requestFocus();
+      return;
+    }
+    setState(() => _busy = true);
+    final err = await widget.s.loginAdmin(e, _pass.text);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err == null) return;
+    final low = err.toLowerCase();
+    setState(() {
+      if (low.contains('password')) {
+        _passErr = err;
+      } else if (low.contains('email') || low.contains('account')) {
+        _emailErr = err;
+      } else {
+        _err = err;
+      }
+    });
+    (low.contains('password') ? _passFocus : _emailFocus).requestFocus();
   }
 
   @override
   Widget build(BuildContext context) {
     final p = Pal.of(context);
-    final s = widget.s;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      AquaField('Email', _email, kbType: TextInputType.emailAddress),
-      const SizedBox(height: 14),
-      AquaField('Password', _pass,
-          obscure: _obscure,
-          eyeToggle: true,
-          onEye: () => setState(() => _obscure = !_obscure)),
-      const SizedBox(height: 8),
+    return VGap([
+      AquaField(
+        'Email',
+        _email,
+        error: _emailErr.isEmpty ? null : _emailErr,
+        kbType: TextInputType.emailAddress,
+        kbAction: TextInputAction.next,
+        autofillHints: const [AutofillHints.email],
+        focusNode: _emailFocus,
+        onSubmitted: (_) => _passFocus.requestFocus(),
+        onChanged: (_) {
+          if (_emailErr.isNotEmpty) setState(() => _emailErr = '');
+        },
+      ),
+      AquaField(
+        'Password',
+        _pass,
+        error: _passErr.isEmpty ? null : _passErr,
+        obscure: _obscure,
+        eyeToggle: true,
+        onEye: () => setState(() => _obscure = !_obscure),
+        kbAction: TextInputAction.done,
+        autofillHints: const [AutofillHints.password],
+        focusNode: _passFocus,
+        onSubmitted: (_) => _submit(),
+        onChanged: (_) {
+          if (_passErr.isNotEmpty) setState(() => _passErr = '');
+        },
+      ),
       ErrLine(_err),
-      Btn('Log In', onPressed: () async {
-        final e = _email.text.trim().toLowerCase();
-        setState(() => _err = '');
-        if (!isEmail(e)) {
-          setState(() => _err = 'Enter a valid email address.');
-          return;
-        }
-        if (_pass.text.length < 4) {
-          setState(() => _err = 'Enter your password (at least 4 characters).');
-          return;
-        }
-        final err = await s.loginAdmin(e, _pass.text);
-        if (err != null) setState(() => _err = err);
-      }),
-      const SizedBox(height: 6),
+      Btn('Log In', busy: _busy, onPressed: _submit),
       Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -304,71 +295,27 @@ class _AdminLoginFormState extends State<_AdminLoginForm> {
 }
 
 ScreenView authAdminView(BuildContext context, AppState s) {
-  final p = Pal.of(context);
-  final hero = Stack(children: [
-    Container(
-      width: double.infinity,
-      decoration: const BoxDecoration(gradient: Pal.auth),
-      padding: EdgeInsets.fromLTRB(
-          16, 26 + MediaQuery.of(context).padding.top, 16, 70),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            AquaLogo(lg: true, color: Colors.white),
-            const SizedBox(height: 12),
-            Text('Run your water station from one place.',
-                style: tx(context, 25, disp: true, w: FontWeight.w700, color: Colors.white, h: 1.15)),
-            const SizedBox(height: 6),
-            Text('Orders, riders, stock and sales.',
-                style: para(context, color: Colors.white.withValues(alpha: 0.92))),
-          ]),
-        ),
-        const SizedBox(width: 12),
-        SizedBox(width: 150, child: storeArt),
-      ]),
-    ),
-    Positioned(left: 0, right: 0, bottom: -1, child: Wave(height: 50, w2: p.bg)),
-  ]);
-
-  // Hero pinned to the top, login card scrolls below it and overlaps the wave.
-  // (Wrapping the hero in the scroll view let the switcher center the whole
-  // block vertically, leaving empty stage bands above and below.)
-  final content = Column(children: [
-    hero,
-    Expanded(
-      child: Container(
-        color: p.bg,
-        child: SingleChildScrollView(
-          clipBehavior: Clip.none,
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
-          child: Transform.translate(
-            offset: const Offset(0, -30),
-            child: AquaCard(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                SegBar(
-                  items: const [
-                    SegItem('customer', 'Customer', icon: 'user'),
-                    SegItem('rider', 'Rider', icon: 'truck'),
-                    SegItem('admin', 'Admin', icon: 'store'),
-                  ],
-                  value: s.authRole,
-                  onSelect: (v) {
-                    s.authRole = v;
-                    s.authTab = 'login';
-                    s.updateUI();
-                  },
-                ),
-                const SizedBox(height: 14),
-                _AdminLoginForm(s),
-              ]),
-            ),
-          ),
-        ),
+  return ScreenView(
+    bare: true,
+    content: Column(children: [
+      AuthHero(
+        title: 'Station admin sign-in',
+        sub: 'Orders, riders, stock and sales.',
+        art: storeArt,
       ),
-    ),
-  ]);
-
-  return ScreenView(content: content, bare: true);
+      authOverlapScroll(
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          AquaCard(child: _AdminLoginForm(s)),
+          const SizedBox(height: 8),
+          // Same sheet the customer form uses, so admin → rider is one tap.
+          Center(
+            child: TxtLink('Switch account type', icon: 'users',
+                onTap: () => showAuthRoleSheet(context, s)),
+          ),
+        ]),
+      ),
+    ]),
+  );
 }
 
 /* =====================================================================
@@ -381,12 +328,14 @@ Widget _acard(BuildContext context, AppState s, Order o) {
   final c = s.custOf(o);
   return AquaCard(
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-    child: GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    child: TapSurface(
       onTap: () {
         s.aid = o.id;
         s.goScreen('adetail');
       },
+      semanticLabel: 'Order ${o.id}, ${c.name}',
+      semanticButton: false,
+      borderRadius: BorderRadius.circular(12),
       child: RowW([
           Gal(o.items.isNotEmpty ? o.items[0].type : 'refill', h: 70),
           Expanded(
@@ -401,13 +350,13 @@ Widget _acard(BuildContext context, AppState s, Order o) {
               const SizedBox(height: 4),
               Text(peso(o.total),
                   style: numStyle(context, size: 15, w: FontWeight.w700, color: p.ink)),
+              const SizedBox(height: 8),
+              // Inside the column the chip can truncate; beside it, "Out for
+              // Delivery" is ~194dp at 1.3x text and overflows a 320dp card.
+              OrdBadge(statusState(o)),
             ]),
           ),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            OrdBadge(statusState(o)),
-            const SizedBox(height: 10),
-            Ic('chev', size: 20, color: p.muted),
-          ]),
+          Ic('chev', size: 20, color: p.muted),
         ],
       ),
     ),
@@ -428,133 +377,196 @@ ScreenView adashView(BuildContext context, AppState s) {
   final low = ['containers', 'water']
       .where((k) => s.inv[k]!.qty <= s.inv[k]!.low)
       .toList();
+  final online =
+      s.riders.where((r) => r.active && r.available == 'available').length;
   final dnT = all
       .where((o) => statusState(o) == 4 && _doneAt(o) >= sod(now))
       .toList();
+  final yT = all.where((o) {
+    final d = _doneAt(o);
+    final start = sod(now) - 86400000;
+    return statusState(o) == 4 && d >= start && d < sod(now);
+  }).toList();
+  final todayOrders = live.where((o) => o.createdAt >= sod(now)).toList();
   final recent = [...all]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-  final recent4 = recent.take(4).toList();
+  final recent3 = recent.take(3).toList();
+  final sales = _osum(dnT);
+  final weekly = <double>[
+    for (var i = 6; i >= 0; i--)
+      _osum(all
+          .where((o) {
+            final d = _doneAt(o);
+            final start = sod(now) - i * 86400000;
+            return statusState(o) == 4 && d >= start && d < start + 86400000;
+          })
+          .toList()),
+  ];
 
-  final hero = Stack(children: [
-    Container(
-      width: double.infinity,
-      decoration: const BoxDecoration(gradient: Pal.hero),
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 58),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Admin Dashboard',
-                style: tx(context, 27, disp: true, w: FontWeight.w700, color: Colors.white, h: 1.15)),
-            const SizedBox(height: 6),
-            Text('Welcome back, Admin!',
-                style: para(context, color: Colors.white.withValues(alpha: 0.92))),
-          ]),
-        ),
-        const SizedBox(width: 12),
-        SizedBox(width: 150, child: storeArt),
-      ]),
-    ),
-    Positioned(left: 0, right: 0, bottom: -1, child: Wave(height: 50, w2: p.bg)),
-  ]);
+  // Tasks before totals: what an admin opens this screen for is what is broken,
+  // and "needs a rider" is impossible to act on silently when every rider is
+  // offline — hence the second row.
+  final alerts = <Widget>[
+    if (needR.isNotEmpty)
+      ActionRow(
+        accent: p.s0fg,
+        icon: 'truck',
+        title:
+            '${needR.length} ${needR.length == 1 ? 'order needs' : 'orders need'} a rider',
+        sub: 'Assign a rider so delivery can start.',
+        verb: 'Assign',
+        onTap: () => s.goScreen('adeliv'),
+      ),
+    if (needR.isNotEmpty && online == 0)
+      ActionRow(
+        accent: p.danger,
+        icon: 'users',
+        title: 'No rider is available',
+        sub: 'Assignments wait until a rider goes online.',
+        verb: 'Riders',
+        onTap: () => s.goScreen('ausers'),
+      ),
+    for (final k in low)
+      ActionRow(
+        accent: p.s5fg,
+        icon: k == 'water' ? 'drop' : 'box',
+        title: '${INV_DEFS[k]!.name}: ${s.inv[k]!.qty} left',
+        sub: 'Reorder level is ${s.inv[k]!.low}.',
+        verb: 'Restock',
+        onTap: () => s.goScreen('ainv'),
+      ),
+  ];
 
   final body = Container(
     color: p.bg,
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _statGrid([
-            _rstatTile(context,
-                icon: 'cart',
-                bg: p.ice,
-                fg: p.blue,
-                num: '${all.length}',
-                label: 'Total Orders',
-                onTap: () {
-                  s.atab = 'all';
-                  s.goScreen('aorders');
-                }),
-            _rstatTile(context,
-                icon: 'truck',
-                bg: p.peachBg,
-                fg: p.peachFg,
-                num: '$ong',
-                label: 'Ongoing\nDeliveries',
-                onTap: () {
-                  s.atab = 'delivery';
-                  s.goScreen('aorders');
-                }),
-            _rstatTile(context,
-                icon: 'drop',
-                bg: p.mintBg,
-                fg: p.mintFg,
-                num: '${_gsum(live, 'refill')}',
-                label: 'Total Gallons\n(Refill)',
-                onTap: () => s.goScreen('areports')),
-            _rstatTile(context,
-                icon: 'box',
-                bg: p.s3bg,
-                fg: p.s3fg,
-                num: '${_gsum(live, 'buy')}',
-                label: 'Total Gallons\n(Buy)',
-                onTap: () => s.goScreen('areports')),
-          ]),
-          if (needR.isNotEmpty)
-            _AlertCard(
-              left: p.s0fg,
-              title:
-                  '${needR.length} ${needR.length == 1 ? 'order' : 'orders'} need${needR.length == 1 ? 's' : ''} a rider',
-              sub: 'Assign a rider so delivery can start.',
-              onTap: () => s.goScreen('adeliv'),
-            ),
-          for (final k in low)
-            _AlertCard(
-              left: p.s5fg,
-              title: '${INV_DEFS[k]!.name}: ${s.inv[k]!.qty} left',
-              sub: 'Reorder level is ${s.inv[k]!.low}. Tap to restock.',
-              onTap: () => s.goScreen('ainv'),
-            ),
-          AquaCard(
-            background: p.ice,
-            child: Row(children: [
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Sales today', style: para(context, color: p.muted, size: 13)),
-                  const SizedBox(height: 1),
-                  Text(peso(_osum(dnT)),
-                      style: numStyle(context, size: 23, w: FontWeight.w700, disp: true, color: p.ink)),
-                ]),
-              ),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('${dnT.length}',
-                    style: numStyle(context, size: 20, w: FontWeight.w800, color: p.ink)),
-                const SizedBox(height: 1),
-                Text('delivered', style: para(context, color: p.muted, size: 13)),
-              ]),
-            ]),
+    child: PadScroll(children: [
+      _salesCard(context,
+          sales: sales,
+          yesterday: _osum(yT),
+          orders: todayOrders.length,
+          week: weekly),
+      if (alerts.isNotEmpty) ...[
+        const SectionRow('Needs attention'),
+        VGap(alerts, gap: 10),
+      ],
+      StatRow([
+        StatTile(
+            icon: 'cart',
+            value: '${todayOrders.length}',
+            label: 'Orders today',
+            bg: p.ice,
+            fg: p.blue,
+            onTap: () {
+              s.atab = 'all';
+              s.goScreen('aorders');
+            }),
+        StatTile(
+            icon: 'truck',
+            value: '$ong',
+            label: 'Ongoing',
+            bg: p.peachBg,
+            fg: p.peachFg,
+            onTap: () {
+              s.atab = 'delivery';
+              s.goScreen('aorders');
+            }),
+        StatTile(
+            icon: 'check',
+            value: '${dnT.length}',
+            label: 'Delivered',
+            bg: p.mintBg,
+            fg: p.mintFg,
+            onTap: () {
+              s.atab = 'done';
+              s.goScreen('aorders');
+            }),
+        StatTile(
+            icon: 'drop',
+            value: '${dnT.fold<int>(0, (a, o) => a + gallonsOf(o))}',
+            label: 'Gallons out',
+            bg: p.s3bg,
+            fg: p.s3fg,
+            onTap: () => s.goScreen('areports')),
+      ]),
+      SectionRow('Recent Orders',
+          action: 'View All', onTap: () => s.goScreen('aorders')),
+      if (recent3.isNotEmpty)
+        ...recent3.map((o) => _acard(context, s, o))
+      else
+        AquaCard(
+          padding: const EdgeInsets.all(22),
+          child: SizedBox(
+            width: double.infinity,
+            child: Text('No orders yet. New orders will show up here.',
+                textAlign: TextAlign.center, style: para(context)),
           ),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const SectionHead('Recent Orders'),
-            Btn('View All',
-                kind: BtnKind.ghost, small: true, onPressed: () => s.goScreen('aorders')),
-          ]),
-          if (recent4.isNotEmpty)
-            ...recent4.map((o) => _acard(context, s, o))
-          else
-            AquaCard(
-              padding: const EdgeInsets.all(22),
-              child: SizedBox(
-                width: double.infinity,
-                child: Text('No orders yet. New orders will show up here.',
-                    textAlign: TextAlign.center, style: para(context)),
-              ),
-            ),
-        ],
-      ),
-    ),
+        ),
+    ]),
   );
 
-  return ScreenView(content: Column(children: [hero, Expanded(child: body)]));
+  return ScreenView(
+    content: Column(children: [
+      DashHero(
+        title: 'Station overview',
+        // The operational state an admin needs on arrival — who can deliver.
+        sub: '${dayLong(DateTime.now())} · '
+            '${s.riders.isEmpty ? 'no riders yet' : '$online of ${s.riders.length} riders available'}',
+        art: SizedBox(width: 112, height: 84, child: storeArt),
+      ),
+      Expanded(child: body),
+    ]),
+  );
+}
+
+/// Money first with yesterday's delta and a 7-day strip, so the headline reads
+/// as a trend instead of a scoreboard.
+Widget _salesCard(BuildContext context,
+    {required double sales,
+    required double yesterday,
+    required int orders,
+    required List<double> week}) {
+  final d = sales - yesterday;
+  return Container(
+    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+    decoration: BoxDecoration(
+      gradient: Pal.btnBlue,
+      borderRadius: BorderRadius.circular(18),
+      boxShadow: const [
+        BoxShadow(color: Color(0x331565D8), offset: Offset(0, 6), blurRadius: 16),
+      ],
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Sales today',
+                style: tx(context, 12.5,
+                    w: FontWeight.w800,
+                    color: Colors.white.withValues(alpha: .85),
+                    ls: .3)),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(peso(sales),
+                  style: numStyle(context,
+                      size: 28, w: FontWeight.w700, disp: true, color: Colors.white)),
+            ),
+          ]),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(width: 92, child: Sparkline(week, height: 46)),
+      ]),
+      const SizedBox(height: 6),
+      Text(
+        '$orders ${orders == 1 ? 'order' : 'orders'} · '
+        '${d >= 0 ? '+' : '-'}${peso(d.abs())} vs yesterday',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: tx(context, 12,
+            w: FontWeight.w600, color: Colors.white.withValues(alpha: .9)),
+      ),
+    ]),
+  );
 }
 
 /* =====================================================================
@@ -676,39 +688,20 @@ ScreenView aordersView(BuildContext context, AppState s) {
       ),
       RowW([
         Expanded(
-          child: Stack(alignment: Alignment.centerLeft, children: [
-            TextField(
-              controller: _aqCtl,
-              onChanged: (v) {
-                s.aq = v;
-                s.save();
-                s.updateUI();
-              },
-              style: para(context),
-              decoration: InputDecoration(
-                hintText: 'Search order ID, customer…',
-                isDense: true,
-                filled: true,
-                fillColor: p.card,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 44, vertical: 15),
-                constraints: const BoxConstraints(minHeight: 50),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: p.line, width: 1.5)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: p.blueHi, width: 1.5)),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 14),
-              child: Ic('search', size: 20, color: p.muted),
-            ),
-          ]),
+          child: AquaSearch(
+            controller: _aqCtl,
+            hint: 'Search order ID, customer…',
+            onChanged: (v) {
+              s.aq = v;
+              s.save();
+              s.updateUI();
+            },
+          ),
         ),
-        GestureDetector(
+        TapSurface(
           onTap: () => _openFilterSheet(context, s),
+          semanticLabel: 'Filters',
+          borderRadius: BorderRadius.circular(14),
           child: Container(
             width: 50,
             height: 50,
@@ -982,11 +975,11 @@ ScreenView adetailView(BuildContext context, AppState s) {
                 try {
                   await launchUrl(Uri.parse('tel:$ph'), mode: LaunchMode.externalApplication);
                 } catch (_) {}
-              }),
+              }, label: 'Call ${c.phone}'),
               _iconAction(context, 'copy', () async {
                 await Clipboard.setData(ClipboardData(text: c.phone));
                 s.toast('Copied');
-              }),
+              }, label: 'Copy phone number'),
             ],
           ]),
           RowW([
@@ -1014,6 +1007,14 @@ ScreenView adetailView(BuildContext context, AppState s) {
         ]),
       ]),
     ),
+    // delivery map — store, door and rider on one screen; dispatch used to
+    // have to open the rider app to answer "where is it now?".
+    if (o.address.hasPin && s.station.lat != null && s.station.lng != null)
+      _AdminOrderMap(
+        station: LatLng(s.station.lat!, s.station.lng!),
+        o: o,
+        sv: sv,
+      ),
     // order items
     AquaCard( child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
@@ -1044,10 +1045,17 @@ ScreenView adetailView(BuildContext context, AppState s) {
           decoration:
               BoxDecoration(color: p.ice, borderRadius: BorderRadius.circular(14)),
           child: Row(children: [
-            Text('Total', style: tx(context, 20, disp: true, w: FontWeight.w700)),
-            const Spacer(),
-            Text(peso(o.total),
-                style: numStyle(context, size: 20, w: FontWeight.w700, disp: true, color: p.ink)),
+            Flexible(
+                child: Text('Total', style: tx(context, 20, disp: true, w: FontWeight.w700))),
+            const SizedBox(width: 12),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Text(peso(o.total),
+                    style: numStyle(context, size: 20, w: FontWeight.w700, disp: true, color: p.ink)),
+              ),
+            ),
           ]),
         ),
         Padding(
@@ -1121,6 +1129,80 @@ ScreenView adetailView(BuildContext context, AppState s) {
 }
 
 /* =====================================================================
+   _AdminOrderMap — read-only dispatch map for an order
+   ===================================================================== */
+
+/// Station, drop-off and rider on one map. The rider marker advances by
+/// simulation from the order's stamps — dispatch needs to see where the order
+/// is, not to drive, so no GPS subscription is opened here.
+class _AdminOrderMap extends StatefulWidget {
+  final LatLng station;
+  final Order o;
+  final int sv;
+  const _AdminOrderMap({required this.station, required this.o, required this.sv});
+
+  @override
+  State<_AdminOrderMap> createState() => _AdminOrderMapState();
+}
+
+class _AdminOrderMapState extends State<_AdminOrderMap> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    // One repaint a second follows the simulated rider; anything faster keeps
+    // the tile layer busy for no visible gain.
+    if (widget.sv == 3) {
+      _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    final o = widget.o;
+    final dest = LatLng(o.address.lat!, o.address.lng!);
+    final rider = o.riderId == null
+        ? null
+        : simulatedRiderPos(
+            station: widget.station,
+            o: o,
+            now: DateTime.now().millisecondsSinceEpoch,
+          );
+    return AquaCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const SectionHead('Delivery map', icon: 'map'),
+        const SizedBox(height: 12),
+        DeliveryTrackMap(
+          station: widget.station,
+          dest: dest,
+          rider: rider,
+          height: 200,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          rider == null
+              ? 'No rider assigned — the map shows the station and the drop-off.'
+              : (o.status >= 4
+                  ? 'Delivered. The rider marker sits at the drop-off.'
+                  : 'Estimated rider position between the station and the drop-off.'),
+          style: tx(context, 13, color: p.muted, h: 1.4),
+        ),
+      ]),
+    );
+  }
+}
+
+/* =====================================================================  
    adeliv — Deliveries board
    ===================================================================== */
 
@@ -1131,23 +1213,23 @@ Widget _dlcard(BuildContext context, AppState s, Order o) {
   final st = o.status;
   Widget? road;
   final st3 = (o.stamps.length > 3) ? o.stamps[3] : null;
-  if (st == 3 && st3 != null) {
-    final mins = ((DateTime.now().millisecondsSinceEpoch - st3) / 60000).round();
-    road = Flexible(
-        child: Text('${mins < 1 ? 1 : mins} min on the road',
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: numStyle(context, size: 13, color: p.muted)));
-  }
+  if (st == 3 && st3 != null) road = Flexible(child: _RoadTime(st3));
   return AquaCard( child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
+      TapSurface(
         onTap: () {
           s.aid = o.id;
           s.goScreen('adetail');
         },
+        semanticLabel: 'Order ${o.id}, ${c.name}',
+        semanticButton: false,
+        borderRadius: BorderRadius.circular(12),
         child: RowW([
             Gal(o.items.isNotEmpty ? o.items[0].type : 'refill', h: 70),
+            // The status chip has to give way to the order details: laid out
+            // beside an Expanded it used to claim its whole natural width and
+            // squeeze this card past the screen at large text sizes.
             Expanded(
+              flex: 3,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(o.id, style: tx(context, 15, disp: true, w: FontWeight.w700, ls: 0.4)),
                 const SizedBox(height: 1),
@@ -1158,7 +1240,13 @@ Widget _dlcard(BuildContext context, AppState s, Order o) {
                     style: para(context, color: p.muted, size: 13)),
               ]),
             ),
-            OrdBadge(statusState(o)),
+            Flexible(
+              flex: 2,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: OrdBadge(statusState(o)),
+              ),
+            ),
           ],
         ),
       ),
@@ -1184,10 +1272,46 @@ Widget _dlcard(BuildContext context, AppState s, Order o) {
   );
 }
 
+/// "N min on the road" that keeps counting while the board stays open.
+class _RoadTime extends StatefulWidget {
+  final int since;
+  const _RoadTime(this.since);
+  @override
+  State<_RoadTime> createState() => _RoadTimeState();
+}
+
+class _RoadTimeState extends State<_RoadTime> {
+  Timer? _tmr;
+
+  @override
+  void initState() {
+    super.initState();
+    _tmr = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tmr?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mins =
+        ((DateTime.now().millisecondsSinceEpoch - widget.since) / 60000).round();
+    return Text('${mins < 1 ? 1 : mins} min on the road',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: numStyle(context, size: 13, color: Pal.of(context).muted));
+  }
+}
+
 /// `secHead(t,n)` — section title with a count tag.
 Widget _secHeadCount(BuildContext context, String title, int n) {
   return Row(children: [
-    SectionHead(title),
+    Expanded(child: SectionHead(title)),
     const SizedBox(width: 8),
     Tag('$n'),
   ]);
@@ -1246,12 +1370,14 @@ ScreenView adelivView(BuildContext context, AppState s) {
           background: p.s0bg,
           borderColor: p.s0fg,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
+          child: TapSurface(
             onTap: () {
               s.aid = o.id;
               s.goScreen('adetail');
             },
+            semanticLabel: 'Issue on order ${o.id}',
+            semanticButton: false,
+            borderRadius: BorderRadius.circular(12),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 Flexible(
@@ -1389,23 +1515,10 @@ class _ProdSheetBodyState extends State<_ProdSheetBody> {
       const SizedBox(height: 14),
       AquaField('Description', _desc, maxLines: 3, minHeight: 96),
       const SizedBox(height: 12),
-      GestureDetector(
-        onTap: () => setState(() => _active = !_active),
-        child: Row(children: [
-          Container(
-            width: 22,
-            height: 22,
-            decoration: BoxDecoration(
-              color: _active ? p.blue : p.card,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: _active ? p.blue : p.line, width: 2),
-            ),
-            alignment: Alignment.center,
-            child: _active ? Ic('check', size: 14, color: Colors.white) : null,
-          ),
-          const SizedBox(width: 10),
-          Text('Available to customers', style: tx(context, 15, w: FontWeight.w600)),
-        ]),
+      CheckRow(
+        value: _active,
+        onChanged: (v) => setState(() => _active = v),
+        label: 'Available to customers',
       ),
       const SizedBox(height: 8),
       Text('The new price applies to new orders. Existing orders keep the price they were placed at.',
@@ -1451,7 +1564,8 @@ ScreenView aprodView(BuildContext context, AppState s) {
                       Expanded(
                           child: Text(s.nameOf(k),
                               style: tx(context, 19, disp: true, w: FontWeight.w700))),
-                      _iconAction(context, 'pencil', () => _openProdSheet(context, s, k)),
+                      _iconAction(context, 'pencil', () => _openProdSheet(context, s, k),
+                          label: 'Edit ${s.nameOf(k)}'),
                     ]),
                     Text(s.descOf(k), style: para(context, color: p.muted, size: 13)),
                     const SizedBox(height: 6),
@@ -1492,7 +1606,7 @@ ScreenView aprodView(BuildContext context, AppState s) {
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: OrdBadge(int.parse(cs[1]),
-                      label: 'Stock: ${s.inv['containers']!.qty} pcs'),
+                      label: '${s.inv['containers']!.qty} pcs'),
                 ),
               ]),
             ),
@@ -1633,15 +1747,14 @@ ScreenView ainvView(BuildContext context, AppState s) {
                       Text(m.sub, style: para(context, color: p.muted, size: 13)),
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
-                        child: Row(children: [
+                        // Wrap, not Row: the qty + unit pair has to survive a 1.3x
+                        // text scale without pushing past the card edge.
+                        child: Wrap(crossAxisAlignment: WrapCrossAlignment.end,
+                            spacing: 6, children: [
                           Text('${it.qty}',
                               style: numStyle(context, size: 22, w: FontWeight.w700, disp: true, color: p.ink)),
-                          const SizedBox(width: 6),
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(m.unit,
-                                style: para(context, color: p.muted, size: 14, w: FontWeight.w600)),
-                          ),
+                          Text(m.unit,
+                              style: para(context, color: p.muted, size: 14, w: FontWeight.w600)),
                         ]),
                       ),
                     ]),
@@ -1816,13 +1929,14 @@ ScreenView ausersView(BuildContext context, AppState s) {
   final List<Widget> body;
   if (t == 'riders') {
     body = [
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Row(children: [
-          SectionHead('Riders', icon: 'truck'),
-          const SizedBox(width: 8),
-          Tag('${s.riders.length}'),
-        ]),
-        Btn('Add Rider',
+      // One flat row with a short button label: the two nested rows overflowed
+      // by 9px once "Add Rider" grew with the text scale on a 320dp screen.
+      Row(children: [
+        const Expanded(child: SectionHead('Riders', icon: 'truck')),
+        const SizedBox(width: 8),
+        Tag('${s.riders.length}'),
+        const SizedBox(width: 10),
+        Btn('Add',
             small: true,
             icon: 'plus',
             iconSize: 18,
@@ -1935,7 +2049,7 @@ ScreenView ausersView(BuildContext context, AppState s) {
     final list = m.values.toList()..sort((a, b) => b.spent.compareTo(a.spent));
     body = [
       Row(children: [
-        SectionHead('Customers', icon: 'users'),
+        Expanded(child: SectionHead('Customers', icon: 'users')),
         const SizedBox(width: 8),
         Tag('${list.length}'),
       ]),
@@ -2156,9 +2270,10 @@ class _SalesChartState extends State<_SalesChart> {
       }),
       const SizedBox(height: 4),
       SizedBox(height: 20, child: Text(_readout, style: para(context, size: 13))),
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
+      TapSurface(
         onTap: () => setState(() => _table = !_table),
+        semanticLabel: _table ? 'Hide table view' : 'View as table',
+        borderRadius: BorderRadius.circular(12),
         child: Container(
           constraints: const BoxConstraints(minHeight: 44),
           alignment: Alignment.centerLeft,
@@ -2176,8 +2291,10 @@ class _SalesChartState extends State<_SalesChart> {
               padding: const EdgeInsets.symmetric(vertical: 5),
               child: Row(children: [
                 Expanded(child: Text(d.long, style: numStyle(context, size: 13, color: p.ink))),
-                Text('${peso(d.v)} · ${d.n}',
-                    style: numStyle(context, size: 13, color: p.ink)),
+                Flexible(
+                    child: Text('${peso(d.v)} · ${d.n}',
+                        textAlign: TextAlign.end,
+                        style: numStyle(context, size: 13, color: p.ink))),
               ]),
             ),
         ]),
@@ -2191,7 +2308,9 @@ Widget _rbar(BuildContext context, String label, String right, double v, double 
   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     Row(children: [
       Expanded(child: Text(label, style: tx(context, 15, w: FontWeight.w700))),
-      Text(right, style: numStyle(context, size: 13, color: p.ink)),
+      Flexible(
+          child: Text(right,
+              textAlign: TextAlign.end, style: numStyle(context, size: 13, color: p.ink))),
     ]),
     const SizedBox(height: 6),
     Container(
@@ -2275,7 +2394,7 @@ ScreenView areportsView(BuildContext context, AppState s) {
   final gc = _osum(del.where((o) => o.pay == 'gcash').toList());
   final cmax = [1.0, cash, gc].reduce((a, b) => a > b ? a : b);
 
-  final summary = 'AQUA report (${PER[s.areport]}): sales ${peso(rev)}, ${del.length} delivered, '
+  final summary = 'AQUARUN report (${PER[s.areport]}): sales ${peso(rev)}, ${del.length} delivered, '
       '${canc.length} cancelled, $gRefill refill and $gBuy buy gallons.';
 
   return ScreenView(content: PadScroll(children: [
@@ -2451,7 +2570,8 @@ ScreenView adminProfileView(BuildContext context, AppState s) {
               ),
             ),
             _iconAction(context, 'pencil',
-                () => showAquaSheet(context, title: 'Edit Profile', body: _ProfileSheetBody(s))),
+                () => showAquaSheet(context, title: 'Edit Profile', body: _ProfileSheetBody(s)),
+                label: 'Edit profile'),
           ],
         ),
         Padding(
@@ -2513,7 +2633,7 @@ ScreenView adminProfileView(BuildContext context, AppState s) {
         onPressed: () {
           _confirmSheet(
             context,
-            title: 'Log out of AQUA?',
+            title: 'Log out of AQUARUN?',
             msg: Text('Your saved addresses and orders stay on this device. Log back in any time.',
                 style: para(context, color: p.muted)),
             label: 'Log Out',
@@ -2561,7 +2681,7 @@ class _AutoProgressCard extends StatelessWidget {
             Text('Auto-progress demo orders', style: tx(context, 15, w: FontWeight.w700)),
             const SizedBox(height: 1),
             Text(
-                'When on, new orders move through every stage on their own. Turn it off to run them from the Admin and Rider apps.',
+                'When on, new orders are confirmed and prepared on their own. Out for delivery and Delivered always come from the rider.',
                 style: para(context, color: p.muted, size: 13)),
           ]),
         ),
@@ -2733,7 +2853,7 @@ ScreenView adminSettingsView(BuildContext context, AppState s) {
           );
         }),
     Center(
-      child: Text('AQUA Water Ordering & Delivery System · Admin app',
+      child: Text('AQUARUN · Admin app',
           textAlign: TextAlign.center, style: para(context, color: p.muted, size: 13)),
     ),
   ]));

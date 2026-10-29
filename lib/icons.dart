@@ -69,6 +69,17 @@ final Map<String, List<_Shape>> _I = {
     _C(7, 18, 1.8),
     _C(17, 18, 1.8),
   ],
+  // Delivery scooter — the rider's marker on the live map. Two wheels, a
+  // step-through deck and handlebars, so it reads as a motorbike rather than
+  // the boxy van used wherever a delivery is just "a delivery". The glyph
+  // fills the viewBox top to bottom; a low, flat scooter turned to mush at
+  // the 20px a map pin gives it.
+  'scooter': [
+    _C(5.5, 19, 2.6),
+    _C(18.5, 19, 2.6),
+    _P('M5.5 19h4.5l3.5-9h3l1.5 9'),
+    _P('M16.5 10l1-5h3'),
+  ],
   'drop': [_P('M12 3s6 6.2 6 10.5a6 6 0 0 1-12 0C6 9.2 12 3 12 3z')],
   'clip': [_R(5, 4, 14, 17, 2), _P('M9 4V3h6v1M9 11h6M9 15h6')],
   'cal': [_R(4, 5, 16, 15, 2), _P('M4 10h16M8 3v4M16 3v4')],

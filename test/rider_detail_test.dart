@@ -41,10 +41,12 @@ void main() {
         ),
       );
 
-  testWidgets('assigned delivery pins the Start Delivery action in the dock', (tester) async {
+  testWidgets('assigned delivery pins the next stage in the dock', (tester) async {
     await tester.pumpWidget(wrap(seededState()));
     await tester.pumpAndSettle();
-    expect(find.text('Start Delivery'), findsOneWidget);
+    // Same four actions as the admin screen: this order is not confirmed yet,
+    // so the one-tap action is Confirm Order.
+    expect(find.text('Confirm Order'), findsOneWidget);
     expect(find.text('View on Map'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -56,7 +58,7 @@ void main() {
       ..stamps = const [1, 2, 3, 4, 5];
     await tester.pumpWidget(wrap(state));
     await tester.pumpAndSettle();
-    expect(find.text('Start Delivery'), findsNothing);
+    expect(find.text('Confirm Order'), findsNothing);
     expect(find.text('Mark as Delivered'), findsNothing);
     expect(tester.takeException(), isNull);
   });

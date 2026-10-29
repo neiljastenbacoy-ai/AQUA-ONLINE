@@ -12,7 +12,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Total Orders'), findsOneWidget);
+    // The overview leads with money and today's counters, not all-time totals.
+    expect(find.text('Sales today'), findsOneWidget);
+    expect(find.text('Orders today'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

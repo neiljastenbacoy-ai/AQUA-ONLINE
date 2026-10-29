@@ -37,12 +37,17 @@ class AppState extends ChangeNotifier {
   List<Order> orders = [];
   List<Notif> notifs = [];
   List<CartItem> cart = [];
+  /// Email of the customer whose cart this is. Without it the cart survived a
+  /// log-out, so the next account on the same phone started with someone
+  /// else's gallons already in the basket.
+  String cartOwner = '';
   int seq = 0;
   Draft draft = Draft();
 
   /* ---- ui/nav ---- */
   String authRole = 'customer';
   String authTab = 'login';
+  bool loginNeedsEmailFocus = false;
   String filter = 'all';
   String? trackId;
   String? lastOrderId;
@@ -50,6 +55,8 @@ class AppState extends ChangeNotifier {
   String screen = 'splash';
   List<String> stack = ['splash'];
   bool noSave = false;
+  /// A place-order tap that is still waiting on its sequence number.
+  bool _placing = false;
 
   /* rider ui */
   String rtab = 'assigned';
@@ -102,7 +109,19 @@ class AppState extends ChangeNotifier {
             (role == 'customer' && user == null))) {
       session = false;
     }
+    if (session && role == 'admin' && admin == null) {
+      session = false;
+      role = 'customer';
+      authRole = 'customer';
+    }
     authRole = role;
+    // A rider who reopened the app is still on their shift. Without this the
+    // GPS broadcast only started at sign-in, so live tracking quietly died the
+    // first time the phone was restarted. Same rule as everywhere else: share
+    // while a delivery is open, stay dark when none is.
+    if (session == true && role == 'rider' && riderId.isNotEmpty) {
+      _ensureBroadcast();
+    }
     notifyListeners();
   }
 
@@ -138,12 +157,19 @@ class AppState extends ChangeNotifier {
     orders = ((d['orders'] ?? []) as List).map((x) => Order.fromJson(x)).toList();
     notifs = ((d['notifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
     cart = ((d['cart'] ?? []) as List).map((x) => CartItem.fromJson(x)).toList();
+    cartOwner = (d['cartOwner'] ?? '') as String;
     seq = (d['seq'] ?? 0) as int;
     if (pick('draft', null) != null) draft = Draft.fromJson(d['draft']);
     settings = AppSettings.fromJson(d['settings'] ?? {});
   }
 
   void migrate() {
+    // Branding rename: a profile still carrying the untouched default station
+    // name would read "AQUA" right beside an AQUARUN logo. A name the admin
+    // typed themselves is left alone.
+    if (station.name == 'AQUA Purified Water Station') {
+      station.name = 'AQUARUN Purified Water Station';
+    }
     if (rider != null && riders.isEmpty) {
       rider!.id = rider!.id.isEmpty ? uid() : rider!.id;
       riders = [rider!];
@@ -171,6 +197,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The shared order list changed under us. A rider's phone has to react to
+  /// that on its own: an order cancelled or reassigned from the customer's or
+  /// the station's device must start or stop this phone's GPS share without
+  /// the rider tapping anything.
+  void ordersSynced() {
+    if (session == true && role == 'rider' && riderId.isNotEmpty) {
+      _ensureBroadcast();
+    }
+  }
+
   void save() {
     if (noSave || !_savedLoaded) return;
     try {
@@ -194,6 +230,7 @@ class AppState extends ChangeNotifier {
         'orders': orders.map((o) => o.toJson()).toList(),
         'notifs': notifs.map((n) => n.toJson()).toList(),
         'cart': cart.map((c) => c.toJson()).toList(),
+        'cartOwner': cartOwner,
         'seq': seq,
         'draft': draft.toJson(),
         'settings': settings.toJson(),
@@ -208,8 +245,10 @@ class AppState extends ChangeNotifier {
   Future<void> resetAll() async {
     noSave = true;
     prefs.remove(KEY);
-    await OnlineSync.i.wipeAll();
-    // fresh instance state
+    // Clear the state before wiping the cloud. wipeAll() re-seeds world/main
+    // from whatever this device currently holds, so wiping first wrote the old
+    // prices, station pin and order counter straight back into the fresh
+    // document — and the reset appeared to change nothing on other phones.
     user = null; session = false; role = 'customer'; rider = null;
     riders = []; riderId = ''; admin = null; anotifs = []; rnotifs = [];
     products = {
@@ -219,10 +258,11 @@ class AppState extends ChangeNotifier {
     station = Station();
     inv = {'containers': InvItem(qty: 40, low: 10), 'water': InvItem(qty: 600, low: 100)};
     invLogList = [];
-    addresses = []; orders = []; notifs = []; cart = []; seq = 0;
+    addresses = []; orders = []; notifs = []; cart = []; cartOwner = ''; seq = 0;
     draft = Draft(); settings = AppSettings();
     authRole = 'customer'; authTab = 'login';
     screen = 'auth'; stack = ['auth']; slide = 0;
+    await OnlineSync.i.wipeAll();
     noSave = false;
     save(); // re-seeds the world doc with product/station defaults
     notifyListeners();
@@ -263,6 +303,13 @@ class AppState extends ChangeNotifier {
 
   void addNotif({String type = 'info', String title = '', String body = '', String? orderId, List<Notif>? into, String? rid}) {
     if (!settings.notify) return;
+    // One note per order stage: the rider, the station and the demo clock can
+    // all move the same order, and the customer must not be told twice.
+    if (orderId != null &&
+        title.isNotEmpty &&
+        notifs.any((n) => n.orderId == orderId && n.title == title)) {
+      return;
+    }
     final n = Notif(
         id: uid(), type: type, title: title, body: body,
         ts: DateTime.now().millisecondsSinceEpoch,
@@ -296,7 +343,10 @@ class AppState extends ChangeNotifier {
   void uiGo(String s, {bool side = false, bool fresh = false, bool replace = false}) {
     if (s == 'home' && role != 'customer') s = homeOf();
     if (side) {
-      stack = s == 'home' ? ['home'] : (ROOT.contains(s) ? [s] : ['home', s]);
+      // Back from a side-menu page returns to this role's home. It used to be
+      // the literal 'home', so an admin leaving Products & Inventory pressed
+      // back and landed inside the customer app, cart badge and all.
+      stack = ROOT.contains(s) ? [s] : [homeOf(), s];
     } else if (ROOT.contains(s) || fresh) {
       stack = [s];
     } else if (replace) {
@@ -433,6 +483,10 @@ class AppState extends ChangeNotifier {
     o.riderId = r?.id;
     if (r != null) {
       addRNotif(rid: r.id, type: 'order', orderId: o.id, title: 'New delivery assigned', body: '${custOf(o).name} · ${o.id} · ${peso(o.total)}');
+      // The share stops when a rider finishes their last run, so a fresh
+      // assignment has to bring it back — otherwise the customer's map waits
+      // on a phone that went quiet after the previous delivery.
+      if (role == 'rider' && riderId == r.id) _ensureBroadcast();
     }
   }
 
@@ -468,13 +522,50 @@ class AppState extends ChangeNotifier {
     if (role == 'rider' && n >= 3) {
       addANotif(type: 'order', orderId: o.id, title: n == 4 ? 'Order delivered' : 'Out for delivery', body: '${custOf(o).name} · ${o.id} · ${riderOf(o)?.name ?? 'rider'}');
     }
-    if (mine(o) && n >= 1 && n <= 4) {
-      final t = noteText(n, o);
-      if (t != null) {
-        addNotif(type: 'order', orderId: o.id, title: t.$1, body: t.$2);
-      }
-    }
+    // Every stage tells the customer, not just the road and the door: a
+    // confirmation the customer never saw is a confirmation they will ring
+    // the station about.
+    if (n >= 1 && n <= 4) _stageNote(o, n);
     save();
+  }
+
+  /// One stage, one note — in the customer's inbox whether they are signed in
+  /// on this device or on another one.
+  void _stageNote(Order o, int n) {
+    final t = noteText(n, o);
+    if (t == null) return;
+    customerNote(o, t.$1, t.$2);
+  }
+
+  /// A note for the customer, wherever they are signed in. On the customer's
+  /// own device it lands in the local inbox; on the rider's or the station's
+  /// device it has to be written across to the customer's document.
+  void customerNote(Order o, String title, String body) {
+    if (mine(o)) {
+      addNotif(type: 'order', orderId: o.id, title: title, body: body);
+    } else {
+      _notifyCustomerElsewhere(o, title, body);
+    }
+  }
+
+  /// The rider or the station moved this order, so the customer's inbox is on
+  /// another device. The customer's own app is the only writer of its
+  /// document, except for this: the note has to be left in their inbox.
+  void _notifyCustomerElsewhere(Order o, String title, String body) {
+    if (!settings.notify) return;
+    final email = o.owner;
+    if (email == null || !email.contains('@')) return;
+    OnlineSync.i.notifyCustomer(
+      email,
+      Notif(
+          id: uid(),
+          type: 'order',
+          title: title,
+          body: body,
+          ts: DateTime.now().millisecondsSinceEpoch,
+          read: false,
+          orderId: o.id),
+    );
   }
 
   (String, String)? noteText(int n, Order o) {
@@ -490,6 +581,17 @@ class AppState extends ChangeNotifier {
   }
 
   /* ================= customer actions ================= */
+
+  /// The basket belongs to whoever filled it. Logging in as a different
+  /// account on the same device starts from an empty cart; the same account
+  /// gets its cart back after logging out.
+  void adoptCart(String email) {
+    if (cartOwner != email) {
+      cart = [];
+      draft.addressId = null;
+    }
+    cartOwner = email;
+  }
 
   void doType(String t) {
     draft.type = t;
@@ -513,6 +615,7 @@ class AppState extends ChangeNotifier {
     }
     final msg = 'Added ${d.qty} × ${nameOf(d.type)}';
     d.qty = 1;
+    cartOwner = user?.email ?? cartOwner;
     goScreen('cart');
     toast(msg);
   }
@@ -550,6 +653,7 @@ class AppState extends ChangeNotifier {
         cart.add(CartItem(type: it.type, qty: it.qty));
       }
     }
+    cartOwner = user?.email ?? cartOwner;
     goScreen('cart');
     toast('Items added to your cart');
   }
@@ -565,11 +669,30 @@ class AppState extends ChangeNotifier {
     }
     final blk = placeBlock();
     if (blk.isNotEmpty) return '$blk. Please update your cart.';
+    // The cart is only emptied after the sequence round-trip, so a second tap
+    // used to get all the way through and place the same gallons twice.
+    if (_placing) return null;
+    _placing = true;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final n = await OnlineSync.i.nextSeq();
+    int n;
+    try {
+      n = await OnlineSync.i.nextSeq();
+    } finally {
+      _placing = false;
+    }
+    seq = n;
+    // Order ids end in the counter, so a repeated number would put this order on
+    // top of an old document with the same id — the customer then saw that old
+    // order's status, usually "Delivered". Ask for the next number until the id
+    // is genuinely new.
+    var id = oid(now, n);
+    for (var guard = 0; orders.any((x) => x.id == id) && guard < 5; guard++) {
+      n = await OnlineSync.i.nextSeq();
+      id = oid(now, n);
+    }
     seq = n;
     final o = Order(
-      id: oid(now, n),
+      id: id,
       items: cart.map((i) => OrderItem(type: i.type, qty: i.qty)).toList(),
       total: sumItems(cart),
       prices: {'refill': priceOf('refill'), 'buy': priceOf('buy')},
@@ -587,6 +710,7 @@ class AppState extends ChangeNotifier {
     );
     orders.insert(0, o);
     cart = [];
+    cartOwner = user!.email;
     lastOrderId = o.id;
     trackId = o.id;
     draft.note = '';
@@ -660,8 +784,11 @@ class AppState extends ChangeNotifier {
   }
 
   Address saveAddress({String? id, required String label, required String street, required String brgy, String city = '', String landmark = '', required bool def, bool pick = false, double? lat, double? lng}) {
-    if (id != null) {
-      final a = addresses.where((x) => x.id == id).firstOrNull!;
+    // The sheet can outlive the address it edits (deleted on another device).
+    // Falling through creates it again instead of throwing on a missing id.
+    final editing = id == null ? null : addresses.where((x) => x.id == id).firstOrNull;
+    if (editing != null) {
+      final a = editing;
       a.label = label; a.street = street; a.brgy = brgy; a.city = city; a.landmark = landmark; a.def = def;
       a.lat = lat; a.lng = lng;
       if (a.def || addresses.length == 1) {
@@ -737,6 +864,7 @@ class AppState extends ChangeNotifier {
     user = Account.fromJson(doc);
     addresses = ((doc['addresses'] ?? []) as List).map((x) => Address.fromJson(x)).toList();
     notifs = ((doc['notifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
+    adoptCart(email);
     session = true;
     role = 'customer';
     OnlineSync.i.sessionChanged();
@@ -760,10 +888,11 @@ class AppState extends ChangeNotifier {
     session = true;
     addresses = [];
     cart = [];
+    cartOwner = email;
     draft.addressId = null; draft.time = 'asap'; draft.note = ''; draft.qty = 1; draft.type = 'refill'; draft.pay = 'cod';
     notifs = [];
     await OnlineSync.i.createUserDoc(email: email, name: name.trim(), phone: phone.trim(), pass: pw);
-    addNotif(type: 'info', title: 'Welcome to AQUA', body: 'Choose Refill Gallon if you have an empty gallon, or Buy Gallon for a new filled one.');
+    addNotif(type: 'info', title: 'Welcome to AQUARUN', body: 'Choose Refill Gallon if you have an empty gallon, or Buy Gallon for a new filled one.');
     OnlineSync.i.sessionChanged();
     save();
     goScreen('home', fresh: true);
@@ -797,8 +926,9 @@ class AppState extends ChangeNotifier {
     session = true;
     save();
     goScreen('rdash', fresh: true);
-    // No-op until Firebase is configured (simulation mode otherwise).
-    RiderLocationBroadcaster.instance.start(riderId: riderId);
+    // Shares only while there is something to deliver; the stream starts on
+    // the first assignment and stops again at the last delivery.
+    _ensureBroadcast();
     toast('Welcome, ${firstName()}');
     return null;
   }
@@ -809,6 +939,9 @@ class AppState extends ChangeNotifier {
     if (pw.length < 4) return 'Enter your password (at least 4 characters).';
     final ad = admin ?? Account(name: 'System Admin', email: ADMIN_SEED_EMAIL, phone: '+63 917 800 1200');
     if (email != ad.email) return 'No admin account found for that email.';
+    // There is exactly one admin account and its password is the seeded one.
+    // Without this check any four-character string signed in as admin.
+    if (pw != ADMIN_SEED_PASS) return 'Incorrect password for that account.';
     admin = ad;
     role = 'admin';
     session = true;
@@ -820,12 +953,20 @@ class AppState extends ChangeNotifier {
   }
 
   void logout() {
-    authRole = role;
+    authRole = 'customer';
     authTab = 'login';
     session = false;
+    role = 'customer';
+    // The admin account record stays: it is the only place the station's own
+    // email is remembered, and there is no user document to read it back from.
+    // Clearing it meant an admin who changed their sign-in email could never
+    // log in again — the check then fell back to the built-in seed address.
+    user = null;
+    rider = null;
     RiderLocationBroadcaster.instance.stop();
     OnlineSync.i.sessionChanged();
     goScreen('auth', fresh: true);
+    save();
   }
 
   /* ================= rider actions ================= */
@@ -834,19 +975,65 @@ class AppState extends ChangeNotifier {
     final o = orders.where((x) => x.id == id).firstOrNull;
     if (o == null || o.cancelled || o.status >= 3) return;
     setStatus(o, 3);
-    RiderLocationBroadcaster.instance.delivering(id);
+    _ensureBroadcast();
     notifyListeners();
     toast('Delivery started');
+  }
+
+  /// Points the GPS share at the run the rider is actually on, and stops it —
+  /// stream and notification — once nothing is left to deliver. Delivery ends
+  /// the customer's live tracking, so the phone must not keep reporting a
+  /// position nobody is watching.
+  void _ensureBroadcast() {
+    final b = RiderLocationBroadcaster.instance;
+    final active = riderId.isEmpty
+        ? const <Order>[]
+        : orders
+            .where((o) => o.riderId == riderId && !o.cancelled && o.status < 4)
+            .toList();
+    if (active.isEmpty) {
+      b.stop();
+      return;
+    }
+    final id = active.first.id;
+    if (!b.running) {
+      b.start(riderId: riderId, orderId: id);
+    } else {
+      b.delivering(id);
+    }
   }
 
   void riderDeliver(String id) {
     final o = orders.where((x) => x.id == id).firstOrNull;
     if (o == null || o.cancelled || o.status >= 4) return;
     setStatus(o, 4);
-    RiderLocationBroadcaster.instance.delivering(null);
+    _ensureBroadcast();
     addRNotif(rid: o.riderId, type: 'order', orderId: o.id, title: 'Delivery completed', body: '${custOf(o).name} · ${o.id} · earned ${peso(feeOf(o))}');
     notifyListeners();
     toast('Delivery completed');
+  }
+
+  /// Rider-side status control: the rider moves the order forward from the
+  /// delivery screen (confirmed → preparing → out for delivery → delivered).
+  /// Forward only — a late tap can never undo a stage the customer has already
+  /// been told about, and nothing here runs on a timer.
+  void riderSetStatus(String id, int n) {
+    final o = orders.where((x) => x.id == id).firstOrNull;
+    if (o == null || o.cancelled || n <= o.status || n > 4) return;
+    setStatus(o, n);
+    // Out for delivery is the stage worth broadcasting a position for; every
+    // other stage re-checks which run the rider is on, and delivered stops it.
+    _ensureBroadcast();
+    if (n == 4) {
+      addRNotif(
+          rid: o.riderId,
+          type: 'order',
+          orderId: o.id,
+          title: 'Delivery completed',
+          body: '${custOf(o).name} · ${o.id} · earned ${peso(feeOf(o))}');
+    }
+    notifyListeners();
+    toast('Marked as ${BADGE[n]}');
   }
 
   void riderAvailableTo(String v) {
@@ -876,10 +1063,16 @@ class AppState extends ChangeNotifier {
     o.issue = Issue(type: type, text: text.trim(), ts: DateTime.now().millisecondsSinceEpoch);
     o.byRider = true;
     if (cancel) o.cancelled = true;
-    if (mine(o)) {
-      addNotif(type: 'order', orderId: o.id, title: cancel ? 'Delivery cancelled' : 'Delivery issue', body: cancel ? 'Order ${o.id} was cancelled: $type.' : 'Your rider reported: $type. They will contact you.');
+    customerNote(
+        o,
+        cancel ? 'Delivery cancelled' : 'Delivery issue',
+        cancel
+            ? 'Order ${o.id} was cancelled: $type.'
+            : 'Your rider reported: $type. They will contact you.');
+    if (cancel) {
+      restoreStock(o);
+      _ensureBroadcast(); // nothing left to share once the run is cancelled
     }
-    if (cancel) restoreStock(o);
     addANotif(type: 'order', orderId: o.id, title: cancel ? 'Delivery cancelled by rider' : 'Delivery issue reported', body: '$type · ${o.id}');
     addRNotif(rid: o.riderId, type: 'info', orderId: o.id, title: cancel ? 'Delivery cancelled' : 'Issue reported', body: '$type · ${o.id}');
     save();
@@ -923,9 +1116,7 @@ class AppState extends ChangeNotifier {
     o.cancelled = true;
     o.byRider = true;
     o.issue = Issue(type: 'Cancelled by the station', text: '', ts: DateTime.now().millisecondsSinceEpoch);
-    if (mine(o)) {
-      addNotif(type: 'order', orderId: o.id, title: 'Order cancelled', body: 'Order ${o.id} was cancelled by the station.');
-    }
+    customerNote(o, 'Order cancelled', 'Order ${o.id} was cancelled by the station.');
     if (o.riderId != null) {
       addRNotif(rid: o.riderId, type: 'info', orderId: o.id, title: 'Delivery cancelled', body: '${o.id} was cancelled by the station.');
     }
@@ -995,7 +1186,8 @@ class AppState extends ChangeNotifier {
     if (pass.length < 4) return 'Choose a password with at least 4 characters.';
     if (riders.any((r) => r.email == e && r.id != id)) return 'Another rider already uses that email.';
     if (id != null) {
-      final r = riders.where((x) => x.id == id).firstOrNull!;
+      final r = riders.where((x) => x.id == id).firstOrNull;
+      if (r == null) return 'That rider account no longer exists.';
       r.name = name.trim(); r.phone = phone.trim(); r.email = e; r.vehicle = vehicle; r.plate = plate.trim().toUpperCase();
       r.pass = pass;
     } else {
@@ -1032,7 +1224,9 @@ class AppState extends ChangeNotifier {
       ..address = address.trim()
       ..open = open
       ..close = close;
-    if (setPin) {
+    if (setPin && lat != null && lng != null) {
+      // A cleared pin used to write null straight into the station, and every
+      // map that starts at the station then crashed on `lat!`.
       station.lat = lat;
       station.lng = lng;
     }
@@ -1060,7 +1254,9 @@ class AppState extends ChangeNotifier {
     settings.autoDeliver = !settings.autoDeliver;
     save();
     notifyListeners();
-    toast(settings.autoDeliver ? 'Demo orders progress automatically' : 'Demo orders wait for the admin and rider apps');
+    toast(settings.autoDeliver
+        ? 'Demo orders are confirmed and prepared automatically'
+        : 'Demo orders wait for the admin and rider apps');
   }
 
   void toggleNotify() {
@@ -1085,6 +1281,13 @@ class AppState extends ChangeNotifier {
     final e = email.trim().toLowerCase();
     if (name.trim().length < 2) return 'Enter your full name.';
     if (!isEmail(e)) return 'Enter a valid email address.';
+    // Email is the account key: orders carry it as owner, the cloud inbox is a
+    // document named after it and the password lives on that document. Retyping
+    // it here used to hide the customer's own order history (it was still filed
+    // under the old address) and strand the password on the old document.
+    if (user != null && e != user!.email) {
+      return 'Your email is your AQUARUN account and cannot be changed here.';
+    }
     user = Account(name: name.trim(), phone: phone.trim(), email: e);
     save();
     notifyListeners();
@@ -1096,27 +1299,29 @@ class AppState extends ChangeNotifier {
 
   void tick() {
     if (session != true) return;
+    // The demo clock belongs to the station and the customer. A rider's phone
+    // confirming or preparing somebody's order is not a thing that exists.
+    if (role == 'rider') return;
+    if (!settings.autoDeliver) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     var changed = false;
     for (final o in orders) {
-      if (o.cancelled || o.status >= 4 || o.byRider || o.owner == 'other' || !settings.autoDeliver) continue;
-      if (o.status == 2 && o.riderId == null) {
-        autoAssign(o);
-        if (o.riderId == null) continue;
-      }
-      if (o.status >= 2 && !settings.autoDeliver) continue;
+      if (o.cancelled || o.byRider || o.owner == 'other') continue;
+      // Confirmed and preparing are the only stages the clock may pretend.
+      // "Out for delivery" and "Delivered" are things a person does — the clock
+      // used to press them too, so a freshly placed order read Delivered about a
+      // minute later with nobody driving anywhere, and any device with demo mode
+      // on did that to every order it could see.
+      if (o.status >= 2) continue;
       final last = (o.stamps.length > o.status && o.stamps[o.status] != null) ? o.stamps[o.status]! : o.createdAt;
-      final needS = o.status < 2 ? DUR[o.status] : (o.status == 2 ? 30 : 40);
-      if (now - last >= needS * 1000) {
-        o.status += 1;
-        while (o.stamps.length <= o.status) {
-          o.stamps.add(null);
-        }
-        o.stamps[o.status] = now;
-        changed = true;
-        final t = noteText(o.status, o);
-        if (t != null) addNotif(type: 'order', orderId: o.id, title: t.$1, body: t.$2);
+      if (now - last < DUR[o.status] * 1000) continue;
+      o.status += 1;
+      while (o.stamps.length <= o.status) {
+        o.stamps.add(null);
       }
+      o.stamps[o.status] = now;
+      changed = true;
+      _stageNote(o, o.status);
     }
     if (changed) {
       save();

@@ -25,12 +25,52 @@ import 'firebase_boot.dart';
 import 'models.dart';
 import 'state.dart';
 
+/// Merges a server snapshot with the orders this device is still carrying.
+///
+/// A snapshot can arrive in the 400 ms between an order being placed (or moved)
+/// and this device pushing it. Replacing the list wholesale there made the
+/// order vanish locally, and because nothing local was left to push it never
+/// came back. Orders the server has already acknowledged are trusted to be
+/// authoritative (so a delete still propagates); only never-pushed ones are
+/// kept.
+List<Order> keepUnsyncedOrders({
+  required List<Order> remote,
+  required List<Order> local,
+  required Set<String> acknowledged,
+}) {
+  final ids = <String>{for (final o in remote) o.id};
+  final merged = List<Order>.of(remote);
+  for (final o in local) {
+    if (!ids.contains(o.id) && !acknowledged.contains(o.id)) merged.add(o);
+  }
+  merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return merged;
+}
+
+/// Unions two notification lists by id. The first list wins on a shared id, so
+/// callers pass the server copy first and its read flags stick.
+List<Notif> mergeNotifs(Iterable<Notif> a, Iterable<Notif> b, {int cap = 120}) {
+  final byId = <String, Notif>{};
+  for (final n in a) {
+    byId[n.id] = n;
+  }
+  for (final n in b) {
+    byId.putIfAbsent(n.id, () => n);
+  }
+  final list = byId.values.toList()..sort((x, y) => y.ts.compareTo(x.ts));
+  if (list.length > cap) list.length = cap;
+  return list;
+}
+
 class OnlineSync {
   static final OnlineSync i = OnlineSync._();
   OnlineSync._();
 
   late AppState _s;
   bool get active => firebaseReady;
+  /// `_s` is late: nothing may touch it before [start] has run.
+  bool _started = false;
+  int _localSeq = 0;
 
   StreamSubscription? _worldSub;
   StreamSubscription? _ordersSub;
@@ -50,14 +90,15 @@ class OnlineSync {
   Future<void> start(AppState s) async {
     _s = s;
     if (!active) return;
+    _started = true;
     final db = FirebaseFirestore.instance;
 
     _worldSub = db.collection('world').doc('main').snapshots().listen(_applyWorld,
-        onError: (e) => debugPrint('[AQUA sync] world listener error: $e'));
+        onError: (e) => debugPrint('[AQUARUN sync] world listener error: $e'));
     _ordersSub = db.collection('orders').snapshots().listen(_applyOrders,
-        onError: (e) => debugPrint('[AQUA sync] orders listener error: $e'));
+        onError: (e) => debugPrint('[AQUARUN sync] orders listener error: $e'));
     _ridersSub = db.collection('riders').snapshots().listen(_applyRiders,
-        onError: (e) => debugPrint('[AQUA sync] riders listener error: $e'));
+        onError: (e) => debugPrint('[AQUARUN sync] riders listener error: $e'));
 
     // Fire-and-forget: a slow/offline network must never block app startup.
     _ensureWorld();
@@ -77,7 +118,7 @@ class OnlineSync {
     _meCache = null;
     if (email != null) {
       _meSub = db.collection('users').doc(email).snapshots().listen(_applyMe,
-          onError: (e) => debugPrint('[AQUA sync] user listener error: $e'));
+          onError: (e) => debugPrint('[AQUARUN sync] user listener error: $e'));
     } else if (rid != null && rid.isNotEmpty) {
       // Rider profile arrives via the riders collection listener; nothing extra.
     }
@@ -117,20 +158,71 @@ class OnlineSync {
           'water': _s.inv['water']!.toJson(),
           'log': _s.invLogList.map((l) => l.toJson()).toList(),
         },
-        'seq': _s.seq,
+        // The highest counter this device knows, never its own stale copy:
+        // pushing the local value used to rewind the shared counter, and two
+        // orders then ended up with the same id.
+        'seq': _highWater(),
         'anotifs': _s.anotifs.map((n) => n.toJson()).toList(),
         'rnotifs': _s.rnotifs.map((n) => n.toJson()).toList(),
       };
+
+  /// Highest order counter this device can prove: its own value, the last
+  /// server copy, and the numbers on the orders it already holds. Order ids end
+  /// in that counter, so handing out a used one puts a new order on top of an
+  /// old document — which is how a fresh order read "Delivered".
+  int _highWater() {
+    var top = _s.seq;
+    final cached = _worldCache?['seq'];
+    if (cached is int && cached > top) top = cached;
+    for (final o in _s.orders) {
+      final i = o.id.lastIndexOf('-');
+      if (i < 0 || i == o.id.length - 1) continue;
+      final n = int.tryParse(o.id.substring(i + 1));
+      if (n != null && n > top) top = n;
+    }
+    return top;
+  }
+
+  /// The world document every device shares, with the fields this device has no
+  /// authority over taken from the last server copy instead of a stale local
+  /// one. Notes are unioned so one phone's push cannot drop another's.
+  Map<String, dynamic> _worldPayload() {
+    final wj = _worldJson();
+    final cached = _worldCache;
+    if (cached != null) {
+      // Only the station edits its own profile, prices and product copy.
+      if (_s.role != 'admin') {
+        for (final k in ['products', 'station']) {
+          if (cached[k] != null) wj[k] = cached[k];
+        }
+      }
+      wj['anotifs'] = mergeNotifs(
+              ((cached['anotifs'] ?? []) as List).map((x) => Notif.fromJson(x)),
+              _s.anotifs)
+          .map((n) => n.toJson())
+          .toList();
+      wj['rnotifs'] = mergeNotifs(
+              ((cached['rnotifs'] ?? []) as List).map((x) => Notif.fromJson(x)),
+              _s.rnotifs)
+          .map((n) => n.toJson())
+          .toList();
+    }
+    return wj;
+  }
 
   Future<void> _push() async {
     if (!active || _wiping) return;
     final db = FirebaseFirestore.instance;
     try {
-      // world
-      final wj = _worldJson();
-      if (_worldCache == null || _differs(_worldCache!, wj)) {
-        await db.collection('world').doc('main').set(wj);
-        _worldCache = wj;
+      // world — only once the current copy is known. A device that has not
+      // received the snapshot yet has nothing trustworthy to write, and this is
+      // a whole-document replace: guessing the counter here rewound it.
+      if (_worldCache != null) {
+        final wj = _worldPayload();
+        if (_differs(_worldCache!, wj)) {
+          await db.collection('world').doc('main').set(wj);
+          _worldCache = wj;
+        }
       }
 
       // orders (only changed docs)
@@ -163,7 +255,7 @@ class OnlineSync {
         }
       }
     } catch (e) {
-      debugPrint('[AQUA sync] push failed: $e');
+      debugPrint('[AQUARUN sync] push failed: $e');
     }
   }
 
@@ -224,14 +316,20 @@ class OnlineSync {
         _s.invLogList =
             ((invJson['log'] ?? []) as List).map((x) => InvLog.fromJson(x)).toList();
       }
-      _s.seq = (d['seq'] ?? _s.seq) as int;
-      _s.anotifs =
-          ((d['anotifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
-      _s.rnotifs =
-          ((d['rnotifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
+      _s.seq = (d['seq'] as int?) ?? _s.seq;
+      if (_s.seq < _highWater()) _s.seq = _highWater();
+      // Union, not replace: this device may be holding a note it has not pushed
+      // yet, and a note the other phone wrote has to survive here too.
+      _s.anotifs = mergeNotifs(
+          ((d['anotifs'] ?? []) as List).map((x) => Notif.fromJson(x)),
+          _s.anotifs,
+          cap: 60);
+      _s.rnotifs = mergeNotifs(
+          ((d['rnotifs'] ?? []) as List).map((x) => Notif.fromJson(x)),
+          _s.rnotifs);
       _s.updateUI();
     } catch (e) {
-      debugPrint('[AQUA sync] world apply failed: $e');
+      debugPrint('[AQUARUN sync] world apply failed: $e');
     }
   }
 
@@ -245,17 +343,21 @@ class OnlineSync {
         try {
           list.add(Order.fromJson(j));
         } catch (e) {
-          debugPrint('[AQUA sync] bad order doc ${doc.id}: $e');
+          debugPrint('[AQUARUN sync] bad order doc ${doc.id}: $e');
         }
       }
+      // What the server knows before this snapshot: anything outside it is
+      // either brand new on this device (never pushed yet) or deleted there.
+      final acknowledged = Set<String>.of(_orderCache.keys);
       _orderCache
         ..clear()
         ..addAll(newCache);
-      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      _s.orders = list;
+      _s.orders = keepUnsyncedOrders(
+          remote: list, local: _s.orders, acknowledged: acknowledged);
       _s.updateUI();
+      _s.ordersSynced();
     } catch (e) {
-      debugPrint('[AQUA sync] orders apply failed: $e');
+      debugPrint('[AQUARUN sync] orders apply failed: $e');
     }
   }
 
@@ -271,7 +373,7 @@ class OnlineSync {
           r.id = doc.id; // doc id is the rider id
           list.add(r);
         } catch (e) {
-          debugPrint('[AQUA sync] bad rider doc ${doc.id}: $e');
+          debugPrint('[AQUARUN sync] bad rider doc ${doc.id}: $e');
         }
       }
       _riderCache
@@ -283,7 +385,36 @@ class OnlineSync {
       }
       _s.updateUI();
     } catch (e) {
-      debugPrint('[AQUA sync] riders apply failed: $e');
+      debugPrint('[AQUARUN sync] riders apply failed: $e');
+    }
+  }
+
+  /// Prepends a notification to another account's inbox.
+  ///
+  /// Customer notifications are written by the customer's own device — it is
+  /// the only writer of its document. The one case that has to cross devices
+  /// is a stage change: the rider or the station moves the order, so the note
+  /// has to be dropped into the customer's inbox from here.
+  Future<void> notifyCustomer(String email, Notif n) async {
+    if (!_started || !active || email.isEmpty) return;
+    final ref = FirebaseFirestore.instance.collection('users').doc(email);
+    try {
+      await FirebaseFirestore.instance.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        if (!snap.exists) return;
+        final list = ((snap.data()?['notifs'] ?? []) as List)
+            .map((x) => Notif.fromJson(x))
+            .toList();
+        // The same stage twice is one note (a double tap, a retry).
+        if (list.any((x) => x.orderId == n.orderId && x.title == n.title)) return;
+        list.insert(0, n);
+        if (list.length > 60) list.length = 60;
+        tx.set(ref, {'notifs': list.map((x) => x.toJson()).toList()},
+            SetOptions(merge: true));
+      });
+      if (_s.user?.email == email) _meCache = null; // our own inbox, refetch it
+    } catch (e) {
+      debugPrint('[AQUARUN sync] notifyCustomer failed: $e');
     }
   }
 
@@ -295,13 +426,18 @@ class OnlineSync {
     try {
       _s.addresses =
           ((d['addresses'] ?? []) as List).map((x) => Address.fromJson(x)).toList();
-      _s.notifs =
-          ((d['notifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
+      // Union, not replace: a note the rider sent can land here while this
+      // device is still holding its own copy, and losing it would mean the
+      // customer never hears that their water moved.
+      _s.notifs = mergeNotifs(
+          ((d['notifs'] ?? []) as List).map((x) => Notif.fromJson(x)),
+          _s.notifs,
+          cap: 60);
       final remoteName = (d['name'] ?? '') as String;
       if (remoteName.isNotEmpty) _s.user!.name = remoteName;
       _s.updateUI();
     } catch (e) {
-      debugPrint('[AQUA sync] user apply failed: $e');
+      debugPrint('[AQUARUN sync] user apply failed: $e');
     }
   }
 
@@ -314,7 +450,7 @@ class OnlineSync {
       final snap = await FirebaseFirestore.instance.collection('users').doc(email).get();
       return snap.data();
     } catch (e) {
-      debugPrint('[AQUA sync] fetchUser failed: $e');
+      debugPrint('[AQUARUN sync] fetchUser failed: $e');
       return null;
     }
   }
@@ -345,7 +481,7 @@ class OnlineSync {
       });
       _meCache = null; // force a push of any local extras on next save
     } catch (e) {
-      debugPrint('[AQUA sync] createUserDoc failed: $e');
+      debugPrint('[AQUARUN sync] createUserDoc failed: $e');
     }
   }
 
@@ -362,26 +498,33 @@ class OnlineSync {
       if (q.docs.isEmpty) return null;
       return MapEntry(q.docs.first.id, q.docs.first.data());
     } catch (e) {
-      debugPrint('[AQUA sync] fetchRider failed: $e');
+      debugPrint('[AQUARUN sync] fetchRider failed: $e');
       return null;
     }
   }
 
   /// Transaction-safe order counter shared by all devices.
   Future<int> nextSeq() async {
+    // Before [start] there is no AppState to read a counter from; a local one
+    // still keeps two orders made in the same millisecond apart.
+    if (!_started) return ++_localSeq;
     if (!active) return ++_s.seq;
     final ref = FirebaseFirestore.instance.collection('world').doc('main');
     try {
       return await FirebaseFirestore.instance.runTransaction((tx) async {
         final snap = await tx.get(ref);
-        final cur = (snap.data()?['seq'] ?? _s.seq) as int;
+        final doc = (snap.data()?['seq'] as int?) ?? 0;
+        final local = _highWater();
+        // Never hand out a number below what either side has already used, even
+        // if the shared counter was rewound by an older build.
+        final cur = doc > local ? doc : local;
         final next = cur + 1;
         tx.set(ref, {'seq': next}, SetOptions(merge: true));
         return next;
       });
     } catch (e) {
-      debugPrint('[AQUA sync] nextSeq failed, using local: $e');
-      return ++_s.seq;
+      debugPrint('[AQUARUN sync] nextSeq failed, using local: $e');
+      return _highWater() + 1;
     }
   }
 
@@ -400,7 +543,7 @@ class OnlineSync {
       _worldCache = null;
       _meCache = null;
     } catch (e) {
-      debugPrint('[AQUA sync] wipeAll failed: $e');
+      debugPrint('[AQUARUN sync] wipeAll failed: $e');
     }
     _wiping = false;
     await _ensureWorld();

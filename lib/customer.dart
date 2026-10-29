@@ -31,48 +31,9 @@ int? _stamp(Order o, int i) => i < o.stamps.length ? o.stamps[i] : null;
 double _unitPrice(Order o, AppState s, String t) =>
     o.unitPrice(t, s.priceOf('refill'), s.priceOf('buy'));
 
-/// Small square icon button (`.del` / `.acts .ibtn`)
-Widget _iconBtnBox(BuildContext context, String icon, VoidCallback onTap,
-    {Color? color, double size = 20, bool circle = false}) {
-  return GestureDetector(
-    onTap: onTap,
-    child: Container(
-      width: 40, height: 40,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(circle ? 999 : 12),
-      ),
-      child: Ic(icon, size: size, color: color),
-    ),
-  );
-}
-
-/// Ice hint box (`.hint`)
-Widget _hintBox(BuildContext context, String text) {
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    decoration: BoxDecoration(
-      color: Pal.of(context).ice,
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Text(text, style: tx(context, 13, color: Pal.of(context).muted)),
-  );
-}
-
 /// Scroll body used right under a gradient hero: negative overlap via translate.
-Widget _overlapScroll(Widget child, {required double overlap, double bottom = 28}) {
-  return Expanded(
-    child: SingleChildScrollView(
-      clipBehavior: Clip.none,
-      padding: EdgeInsets.fromLTRB(16, 0, 16, bottom + overlap),
-      child: Transform.translate(
-        offset: Offset(0, -overlap),
-        child: child,
-      ),
-    ),
-  );
-}
+Widget _overlapScroll(Widget child, {required double overlap, double bottom = 28}) =>
+    authOverlapScroll(child, overlap: overlap, bottom: bottom);
 
 /* ================= splash ================= */
 
@@ -114,11 +75,13 @@ class _SplashBodyState extends State<_SplashBody> with TickerProviderStateMixin 
               return Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                 const AquaLogo(lg: true, color: Colors.white),
                 const SizedBox(height: 14),
-                Text('Water Ordering & Delivery System',
-                    style: tx(context, 15, color: Colors.white.withValues(alpha: .9))),
-                const SizedBox(height: 14),
                 Transform.translate(
-                  offset: Offset(0, -8 * math.sin(math.pi * _float.value)),
+                  offset: Offset(
+                    0,
+                    MediaQuery.disableAnimationsOf(context)
+                        ? 0
+                        : -8 * math.sin(math.pi * _float.value),
+                  ),
                   child: const Gal('refill', h: 150),
                 ),
                 const SizedBox(height: 14),
@@ -162,76 +125,76 @@ class _SplashBodyState extends State<_SplashBody> with TickerProviderStateMixin 
 /* ================= auth (customer role) ================= */
 
 ScreenView authView(BuildContext context, AppState s) {
-  final p = Pal.of(context);
   final isReg = s.authTab == 'register';
-  final Widget form =
-      isReg ? _RegisterForm(s, key: const ValueKey('register')) : _LoginForm(s, key: const ValueKey('login'));
+  final Widget form = isReg
+      ? _RegisterForm(s, key: const ValueKey('register'))
+      : _LoginForm(s, key: const ValueKey('login'));
   return ScreenView(
     bare: true,
     content: Column(children: [
-      Container(
-        decoration: const BoxDecoration(gradient: Pal.auth),
-        child: Stack(children: [
-          Container(
-            padding: EdgeInsets.fromLTRB(
-                16, 26 + MediaQuery.of(context).padding.top, 16, 70),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const AquaLogo(lg: true, color: Colors.white),
-                  const SizedBox(height: 12),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 260),
-                    child: Text('Purified water, delivered to your door.',
-                        style: tx(context, 25, disp: true, w: FontWeight.w700,
-                            color: Colors.white, h: 1.15)),
-                  ),
-                  const SizedBox(height: 6),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 190),
-                    child: Text('Refill or buy gallons in a few taps.',
-                        style: para(context, color: Colors.white.withValues(alpha: .92))),
-                  ),
-                ]),
+      AuthHero(
+        title: isReg ? 'Create your account' : 'Welcome back',
+        sub: isReg
+            ? 'Refills and new gallons, a few taps away.'
+            : 'Sign in to order and track your water.',
+        art: const Gal('buy', h: 118),
+      ),
+      authOverlapScroll(
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          AquaCard(
+            child: VGap([
+              SegBar(
+                items: const [
+                  SegItem('login', 'Log In'),
+                  SegItem('register', 'Register'),
+                ],
+                value: s.authTab,
+                onSelect: (v) {
+                  s.authTab = v;
+                  s.updateUI();
+                },
               ),
-              const Gal('buy', h: 124),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                // Top-aligned: the register form is much taller, and a centred
+                // stack would make the card jump while the two cross-fade.
+                layoutBuilder: (current, previous) => Stack(
+                  alignment: Alignment.topCenter,
+                  children: [...previous, ?current],
+                ),
+                child: form,
+              ),
             ]),
           ),
-          Positioned(left: 0, right: 0, bottom: 0, child: Wave(height: 50, w2: p.bg)),
+          const SizedBox(height: 8),
+          Center(
+            child: TxtLink('Staff sign-in',
+                icon: 'truck', onTap: () => showAuthRoleSheet(context, s)),
+          ),
         ]),
       ),
-      _overlapScroll(
-        AquaCard(
-          child: VGap([
-            SegBar(
-              items: const [
-                SegItem('customer', 'Customer', icon: 'user'),
-                SegItem('rider', 'Rider', icon: 'truck'),
-                SegItem('admin', 'Admin', icon: 'store'),
-              ],
-              value: s.authRole,
-              onSelect: (v) {
-                s.authRole = v;
-                s.authTab = 'login';
-                s.updateUI();
-              },
-            ),
-            SegBar(
-              items: const [
-                SegItem('login', 'Log In'),
-                SegItem('register', 'Register'),
-              ],
-              value: s.authTab,
-              onSelect: (v) {
-                s.authTab = v;
-                s.updateUI();
-              },
-            ),
-            form,
-          ]),
-        ),
-        overlap: 30,
-      ),
+    ]),
+  );
+}
+
+/// Password resets are manual in this station setup, so the link explains the
+/// only route instead of pretending to send a reset email.
+void _forgotSheet(BuildContext context, String email) {
+  final who = email.trim();
+  showAquaSheet<void>(
+    context,
+    title: 'Forgot password?',
+    body: VGap([
+      Text(
+          'Only the station can reset a password, so knowing an email address is not enough to open an account.',
+          style: para(context, color: Pal.of(context).muted)),
+      Text(
+          who.isEmpty
+              ? 'Message the AQUARUN station at 0917 800 1200 and tell them the email you signed up with.'
+              : 'Message the AQUARUN station at 0917 800 1200 and ask them to reset the password for $who.',
+          style: para(context)),
+      Btn('Back to sign in',
+          kind: BtnKind.alt, onPressed: () => Navigator.of(context).pop()),
     ]),
   );
 }
@@ -246,31 +209,103 @@ class _LoginForm extends StatefulWidget {
 class _LoginFormState extends State<_LoginForm> {
   final _email = TextEditingController();
   final _pw = TextEditingController();
+  final _emailFocus = FocusNode();
+  final _pwFocus = FocusNode();
   bool _show = false;
   bool _busy = false;
+  String _emailErr = '';
+  String _pwErr = '';
   String _err = '';
 
   @override
   void dispose() {
     _email.dispose();
     _pw.dispose();
+    _emailFocus.dispose();
+    _pwFocus.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _email.text.trim();
+    if (_busy) return;
+    setState(() {
+      _err = '';
+      _emailErr = '';
+      _pwErr = '';
+    });
+    if (email.isEmpty) {
+      setState(() => _emailErr = 'Enter your email address.');
+      _emailFocus.requestFocus();
+      return;
+    }
+    if (!isEmail(email)) {
+      setState(() => _emailErr = 'That address is missing an @ or a domain.');
+      _emailFocus.requestFocus();
+      return;
+    }
+    if (_pw.text.isEmpty) {
+      setState(() => _pwErr = 'Enter your password.');
+      _pwFocus.requestFocus();
+      return;
+    }
+    setState(() => _busy = true);
+    final err = await widget.s.loginCustomer(email, _pw.text);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err == null) return;
+    // loginCustomer answers with one sentence; show it on the field it names.
+    final low = err.toLowerCase();
+    setState(() {
+      if (low.contains('password')) {
+        _pwErr = err;
+      } else if (low.contains('email') || low.contains('account')) {
+        _emailErr = err;
+      } else {
+        _err = err;
+      }
+    });
+    (low.contains('password') ? _pwFocus : _emailFocus).requestFocus();
   }
 
   @override
   Widget build(BuildContext context) {
-    final s = widget.s;
     return VGap([
-      AquaField('Email', _email, kbType: TextInputType.emailAddress),
-      AquaField('Password', _pw, obscure: !_show, eyeToggle: true,
-          onEye: () => setState(() => _show = !_show)),
+      AquaField(
+        'Email',
+        _email,
+        error: _emailErr.isEmpty ? null : _emailErr,
+        kbType: TextInputType.emailAddress,
+        kbAction: TextInputAction.next,
+        autofillHints: const [AutofillHints.email],
+        focusNode: _emailFocus,
+        onSubmitted: (_) => _pwFocus.requestFocus(),
+        onChanged: (_) {
+          if (_emailErr.isNotEmpty) setState(() => _emailErr = '');
+        },
+      ),
+      AquaField(
+        'Password',
+        _pw,
+        error: _pwErr.isEmpty ? null : _pwErr,
+        obscure: !_show,
+        eyeToggle: true,
+        onEye: () => setState(() => _show = !_show),
+        kbAction: TextInputAction.done,
+        autofillHints: const [AutofillHints.password],
+        focusNode: _pwFocus,
+        onSubmitted: (_) => _submit(),
+        onChanged: (_) {
+          if (_pwErr.isNotEmpty) setState(() => _pwErr = '');
+        },
+      ),
+      Align(
+        alignment: Alignment.centerRight,
+        child: TxtLink('Forgot password?',
+            onTap: () => _forgotSheet(context, _email.text)),
+      ),
       ErrLine(_err),
-      Btn(_busy ? 'Logging in…' : 'Log In', onPressed: _busy ? null : () async {
-        setState(() { _busy = true; _err = ''; });
-        final err = await s.loginCustomer(_email.text, _pw.text);
-        if (mounted && err != null) setState(() { _err = err; _busy = false; });
-      }),
-      _hintBox(context, 'New here? Create an account on the Register tab. Your account syncs across all devices.'),
+      Btn('Log In', busy: _busy, onPressed: _submit),
     ]);
   }
 }
@@ -287,8 +322,16 @@ class _RegisterFormState extends State<_RegisterForm> {
   final _phone = TextEditingController();
   final _email = TextEditingController();
   final _pw = TextEditingController();
+  final _nameFocus = FocusNode();
+  final _phoneFocus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _pwFocus = FocusNode();
   bool _show = false;
   bool _busy = false;
+  String _nameErr = '';
+  String _phoneErr = '';
+  String _emailErr = '';
+  String _pwErr = '';
   String _err = '';
 
   @override
@@ -297,24 +340,116 @@ class _RegisterFormState extends State<_RegisterForm> {
     _phone.dispose();
     _email.dispose();
     _pw.dispose();
+    _nameFocus.dispose();
+    _phoneFocus.dispose();
+    _emailFocus.dispose();
+    _pwFocus.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _email.text.trim();
+    if (_busy) return;
+    setState(() {
+      _err = '';
+      _nameErr = '';
+      _phoneErr = '';
+      _emailErr = '';
+      _pwErr = '';
+    });
+    // Same checks the state layer runs, done here first so each one lands on
+    // its own field instead of in a single line under the form.
+    if (_name.text.trim().length < 2) {
+      setState(() => _nameErr = 'Enter your full name.');
+      _nameFocus.requestFocus();
+      return;
+    }
+    if (_phone.text.replaceAll(RegExp(r'\D'), '').length < 10) {
+      setState(() => _phoneErr = 'Use at least 10 digits, like 0917 555 0142.');
+      _phoneFocus.requestFocus();
+      return;
+    }
+    if (!isEmail(email)) {
+      setState(() => _emailErr = 'That address is missing an @ or a domain.');
+      _emailFocus.requestFocus();
+      return;
+    }
+    if (_pw.text.length < 4) {
+      setState(() => _pwErr = 'Use at least 4 characters.');
+      _pwFocus.requestFocus();
+      return;
+    }
+    setState(() => _busy = true);
+    final err = await widget.s
+        .registerCustomer(_name.text, _phone.text, email, _pw.text);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err == null) return;
+    // Account-level answers (email taken, offline) stay on the form line.
+    setState(() => _err = err);
   }
 
   @override
   Widget build(BuildContext context) {
-    final s = widget.s;
     return VGap([
-      AquaField('Full name', _name, hint: 'Maria Santos'),
-      AquaField('Mobile number', _phone, kbType: TextInputType.phone, hint: '0917 555 0142'),
-      AquaField('Email', _email, kbType: TextInputType.emailAddress, hint: 'you@example.com'),
-      AquaField('Password (at least 4 characters)', _pw, obscure: !_show, eyeToggle: true,
-          onEye: () => setState(() => _show = !_show)),
+      AquaField(
+        'Full name',
+        _name,
+        error: _nameErr.isEmpty ? null : _nameErr,
+        hint: 'Maria Santos',
+        kbAction: TextInputAction.next,
+        autofillHints: const [AutofillHints.name],
+        focusNode: _nameFocus,
+        onSubmitted: (_) => _phoneFocus.requestFocus(),
+        onChanged: (_) {
+          if (_nameErr.isNotEmpty) setState(() => _nameErr = '');
+        },
+      ),
+      AquaField(
+        'Mobile number',
+        _phone,
+        error: _phoneErr.isEmpty ? null : _phoneErr,
+        kbType: TextInputType.phone,
+        hint: '0917 555 0142',
+        kbAction: TextInputAction.next,
+        autofillHints: const [AutofillHints.telephoneNumber],
+        focusNode: _phoneFocus,
+        onSubmitted: (_) => _emailFocus.requestFocus(),
+        onChanged: (_) {
+          if (_phoneErr.isNotEmpty) setState(() => _phoneErr = '');
+        },
+      ),
+      AquaField(
+        'Email',
+        _email,
+        error: _emailErr.isEmpty ? null : _emailErr,
+        kbType: TextInputType.emailAddress,
+        hint: 'you@example.com',
+        kbAction: TextInputAction.next,
+        autofillHints: const [AutofillHints.email],
+        focusNode: _emailFocus,
+        onSubmitted: (_) => _pwFocus.requestFocus(),
+        onChanged: (_) {
+          if (_emailErr.isNotEmpty) setState(() => _emailErr = '');
+        },
+      ),
+      AquaField(
+        'Password (at least 4 characters)',
+        _pw,
+        error: _pwErr.isEmpty ? null : _pwErr,
+        obscure: !_show,
+        eyeToggle: true,
+        onEye: () => setState(() => _show = !_show),
+        kbAction: TextInputAction.done,
+        autofillHints: const [AutofillHints.newPassword],
+        focusNode: _pwFocus,
+        onSubmitted: (_) => _submit(),
+        onChanged: (_) {
+          if (_pwErr.isNotEmpty) setState(() => _pwErr = '');
+        },
+      ),
       ErrLine(_err),
-      Btn(_busy ? 'Creating account…' : 'Create Account', onPressed: _busy ? null : () async {
-        setState(() { _busy = true; _err = ''; });
-        final err = await s.registerCustomer(_name.text, _phone.text, _email.text, _pw.text);
-        if (mounted && err != null) setState(() { _err = err; _busy = false; });
-      }),
+      Btn('Create Account', busy: _busy, onPressed: _submit),
     ]);
   }
 }
@@ -322,9 +457,13 @@ class _RegisterFormState extends State<_RegisterForm> {
 /* ================= home ================= */
 
 ScreenView homeView(BuildContext context, AppState s) {
-  final actList = s.myOrders().where(isActive).toList()
+  final my = s.myOrders();
+  final actList = my.where(isActive).toList()
     ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   final Order? act = actList.isEmpty ? null : actList.first;
+  final past = my.where((o) => !isActive(o) && !o.cancelled).toList()
+    ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  final Order? last = past.isEmpty ? null : past.first;
 
   final kids = <Widget>[];
   void add(Widget w) {
@@ -332,43 +471,50 @@ ScreenView homeView(BuildContext context, AppState s) {
     kids.add(w);
   }
 
-  add(Row(children: [
-    Expanded(child: _homeTile(context, 'Order\nWater', 'cart', () {
-      s.draft.type = 'refill';
-      s.draft.qty = 1;
-      s.goScreen('order');
-    }, deco: const BoxDecoration(gradient: Pal.tile1), fg: Colors.white)),
-    const SizedBox(width: 10),
-    Expanded(child: _homeTile(context, 'My\nOrders', 'clip', () => s.goScreen('orders'),
-        deco: BoxDecoration(color: Pal.of(context).mintBg), fg: Pal.of(context).mintFg)),
-    const SizedBox(width: 10),
-    Expanded(child: _homeTile(context, 'Track\nDelivery', 'pin', () {
-      s.trackId = null;
-      s.goScreen('track');
-    }, deco: BoxDecoration(color: Pal.of(context).peachBg), fg: Pal.of(context).peachFg)),
-  ]));
+  // The page follows the questions a customer actually has: where is my water,
+  // what does it cost, can I just repeat it, where else can I go. Products used
+  // to sit under the promo carousel at ~650dp on a 640dp phone, prices unseen.
+  if (act != null) add(_activeBanner(context, s, act));
 
-  if (act != null) {
-    add(_activeBanner(context, s, act));
-  }
-
-  add(VGap([_Slides(s)], gap: 10));
-  add(SectionHead('Our Products'));
+  add(const SectionHead('Our Products'));
   add(Row(children: [
-    Expanded(child: GestureDetector(
+    Expanded(child: TapSurface(
       onTap: () => _openProduct(s, 'refill'),
+      semanticLabel: s.nameOf('refill'),
+      borderRadius: BorderRadius.circular(18),
       child: _prodCard(context, s, 'refill'),
     )),
     const SizedBox(width: 12),
-    Expanded(child: GestureDetector(
+    Expanded(child: TapSurface(
       onTap: () => _openProduct(s, 'buy'),
+      semanticLabel: s.nameOf('buy'),
+      borderRadius: BorderRadius.circular(18),
       child: _prodCard(context, s, 'buy'),
     )),
   ]));
 
+  if (last != null) add(_orderAgain(context, s, last));
+
+  add(Row(children: [
+    Expanded(child: _miniTile(context, 'My Orders', 'clip', () => s.goScreen('orders'))),
+    const SizedBox(width: 10),
+    Expanded(child: _miniTile(context, 'Track Delivery', 'pin', () {
+      s.trackId = null;
+      s.goScreen('track');
+    })),
+  ]));
+
+  add(_Slides(s));
+
   return ScreenView(
     content: Column(children: [
-      _homeHero(context, s),
+      DashHero(
+        title: 'Good Day, ${s.firstName()}!',
+        sub: act != null
+            ? '${act.id} · ${BADGE[statusState(act)]}'
+            : 'Refill or buy — we deliver to your door.',
+        art: const Gal('refill', h: 96),
+      ),
       _overlapScroll(
         Container(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
@@ -386,51 +532,72 @@ void _openProduct(AppState s, String k) {
   s.goScreen('order');
 }
 
-Widget _homeHero(BuildContext context, AppState s) {
+/// Repeat the last finished order in one tap — `reorder` already fills the cart.
+Widget _orderAgain(BuildContext context, AppState s, Order o) {
   final p = Pal.of(context);
-  return Container(
-    decoration: const BoxDecoration(gradient: Pal.hero),
-    child: Stack(children: [
-      Container(
-        padding: const EdgeInsets.fromLTRB(16, 6, 16, 58),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Good Day, ${s.firstName()}!',
-                  style: tx(context, 27, disp: true, w: FontWeight.w700,
-                      color: Colors.white, h: 1.15)),
-              const SizedBox(height: 6),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 175),
-                child: Text('Order your water easily and get it delivered to your home.',
-                    style: para(context, color: Colors.white.withValues(alpha: .92))),
-              ),
-            ]),
-          ),
-          Transform.translate(offset: const Offset(0, 6), child: const Gal('refill', h: 124)),
-        ]),
+  return TapSurface(
+    onTap: () => s.reorder(o.id),
+    semanticLabel: 'Order again: ${itemsText(o)}',
+    borderRadius: BorderRadius.circular(16),
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        color: p.ice,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: p.line),
       ),
-      Positioned(left: 0, right: 0, bottom: 0, child: Wave(height: 50, w2: p.bg)),
-    ]),
+      child: Row(children: [
+        Ic('copy', size: 20, color: p.blue),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Order again',
+                style: tx(context, 13.5, w: FontWeight.w800, color: p.link)),
+            Text('${itemsText(o)} · ${peso(o.total)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: tx(context, 12.5, color: p.muted, h: 1.3)),
+          ]),
+        ),
+        Ic('chev', size: 16, color: p.link),
+      ]),
+    ),
   );
 }
 
-Widget _homeTile(BuildContext context, String label, String icon, VoidCallback onTap,
-    {required BoxDecoration deco, required Color fg}) {
-  return GestureDetector(
+/// Secondary destination: the product cards own the primary actions.
+Widget _miniTile(BuildContext context, String label, String icon, VoidCallback onTap) {
+  final p = Pal.of(context);
+  return TapSurface(
     onTap: onTap,
+    semanticLabel: label,
+    borderRadius: BorderRadius.circular(16),
     child: Container(
-      height: 104,
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
-      decoration: deco.copyWith(
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: Pal.of(context).shadow,
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: p.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: p.line),
+        boxShadow: p.shadow,
       ),
-      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Ic(icon, size: 30, color: fg),
-        const SizedBox(height: 8),
-        Text(label, textAlign: TextAlign.center,
-            style: tx(context, 13.5, disp: true, w: FontWeight.w600, color: fg, h: 1.2)),
+      // Two of these share 288dp on a 320dp phone; the label wraps to its two
+      // words and truncates only at very large text.
+      child: Row(children: [
+        Container(
+          width: 26,
+          height: 26,
+          decoration: BoxDecoration(color: p.ice, shape: BoxShape.circle),
+          alignment: Alignment.center,
+          child: Ic(icon, size: 15, color: p.blue),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: tx(context, 13, disp: true, w: FontWeight.w700, h: 1.15)),
+        ),
       ]),
     ),
   );
@@ -438,11 +605,13 @@ Widget _homeTile(BuildContext context, String label, String icon, VoidCallback o
 
 Widget _activeBanner(BuildContext context, AppState s, Order o) {
   final p = Pal.of(context);
-    return GestureDetector(
+    return TapSurface(
       onTap: () {
         s.trackId = o.id;
         s.goScreen('track');
       },
+      semanticLabel: 'Order ${o.id}, ${BADGE[statusState(o)]}, track delivery',
+      borderRadius: BorderRadius.circular(16),
       // Flutter only allows a borderRadius on a uniform-color border, so the
       // rounded corners come from a clip (same look as the CSS original).
       child: Container(
@@ -463,13 +632,20 @@ Widget _activeBanner(BuildContext context, AppState s, Order o) {
               bottom: BorderSide(color: p.line),
             ),
           ),
+          // No status chip on this card: at 1.3x text it took 175dp of a
+          // 255dp card and crushed the progress bar to 9dp. The five-segment
+          // bar carries the stage; the hero subtitle keeps the readable label.
           child: RowW([
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(o.id, style: tx(context, 15, disp: true, w: FontWeight.w700, ls: .4)),
               const SizedBox(height: 2),
-              Text(itemsText(o), style: tx(context, 13, color: p.muted)),
+              Text(itemsText(o),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tx(context, 13, color: p.muted)),
+              const SizedBox(height: 8),
+              _statusBar(context, statusState(o)),
             ])),
-            OrdBadge(statusState(o)),
             Ic('chev', size: 18, color: p.muted),
           ], gap: 10),
           ),
@@ -478,23 +654,74 @@ Widget _activeBanner(BuildContext context, AppState s, Order o) {
     );
 }
 
+/// Five-segment progress under the live order: one filled bar per reached
+/// [STAGE], so "how far along" is readable at a glance instead of only as a
+/// badge label.
+Widget _statusBar(BuildContext context, int st) {
+  final p = Pal.of(context);
+  const n = 5;
+  return Row(children: [
+    for (var i = 0; i < n; i++) ...[
+      Expanded(
+        child: Container(
+          height: 4,
+          decoration: BoxDecoration(
+            color: i <= st ? p.blue : p.ice2,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ),
+      if (i != n - 1) const SizedBox(width: 4),
+    ],
+  ]);
+}
+
 Widget _slide(BuildContext context, AppState s, List<String> sl) {
   final p = Pal.of(context);
   final h = sl[0].replaceAll('{R}', peso(s.priceOf('refill'))).replaceAll('{B}', peso(s.priceOf('buy')));
-  return Container(
-    decoration: const BoxDecoration(gradient: Pal.slide),
-    padding: const EdgeInsets.all(16),
-    child: Row(children: [
-      Expanded(
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(h, style: tx(context, 19, disp: true, w: FontWeight.w700, h: 1.2)),
-          const SizedBox(height: 6),
-          Text(sl[1], style: tx(context, 13.5, color: p.muted)),
-        ]),
+  return Stack(children: [
+    Container(
+      // Themed: the light gradient turned into unreadable pale text in dark mode.
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: const Alignment(-0.3, -0.6),
+          end: const Alignment(0.8, 0.8),
+          colors: [p.ice, p.ice2],
+        ),
       ),
-      Gal(sl[2] == 'buy' ? 'buy' : 'refill', h: 104),
-    ]),
-  );
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      child: Row(children: [
+        Expanded(
+          child: Column(mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(h,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: tx(context, 17, disp: true, w: FontWeight.w700, h: 1.2)),
+            const SizedBox(height: 5),
+            Text(sl[1],
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: tx(context, 13, color: p.muted, h: 1.35)),
+          ]),
+        ),
+        Gal(sl[2] == 'buy' ? 'buy' : 'refill', h: 92),
+      ]),
+    ),
+    // Affordance: the slide is a shortcut to that product, not a poster.
+    Positioned(
+      right: 10,
+      top: 10,
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(color: p.card, shape: BoxShape.circle),
+        alignment: Alignment.center,
+        child: Ic('chev', size: 15, color: p.link),
+      ),
+    ),
+  ]);
 }
 
 class _Slides extends StatefulWidget {
@@ -517,6 +744,7 @@ class _SlidesState extends State<_Slides> with TickerProviderStateMixin {
     _page = widget.s.slide;
     _tmr = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!mounted) return;
+      if (MediaQuery.of(context).disableAnimations) return;
       if (DateTime.now().difference(_userAt).inMilliseconds < 4500) return;
       _goTo((_page + 1) % SLIDES_DATA.length);
     });
@@ -538,7 +766,7 @@ class _SlidesState extends State<_Slides> with TickerProviderStateMixin {
     final s = widget.s;
     final p = Pal.of(context);
     final promo = Container(
-      height: 176,
+      height: 156,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: p.line),
@@ -559,21 +787,36 @@ class _SlidesState extends State<_Slides> with TickerProviderStateMixin {
             s.slide = i;
             if (mounted) setState(() {});
           },
-          children: [for (final sl in SLIDES_DATA) _slide(context, s, sl)],
+          // Each promo is a shortcut to the product it advertises; as a plain
+          // poster it was the biggest dead area on the screen.
+          children: [
+            for (final sl in SLIDES_DATA)
+              TapSurface(
+                onTap: () => _openProduct(s, sl[2] == 'buy' ? 'buy' : 'refill'),
+                semanticLabel: sl[0],
+                child: _slide(context, s, sl),
+              ),
+          ],
         ),
       ),
     );
+    // 22dp indicator row instead of 36dp: the carousel now sits under the
+    // products, so it must not eat another slice of the screen.
     final dots = Row(mainAxisAlignment: MainAxisAlignment.center, children: [
       for (var i = 0; i < SLIDES_DATA.length; i++)
-        GestureDetector(
+        TapSurface(
           onTap: () => _goTo(i),
+          semanticLabel: 'Slide ${i + 1} of ${SLIDES_DATA.length}',
+          semanticSelected: i == _page,
+          borderRadius: BorderRadius.circular(999),
           child: Container(
-            width: 28, height: 28,
+            width: 24,
+            height: 22,
             alignment: Alignment.center,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              width: i == _page ? 20 : 8,
-              height: 8,
+              width: i == _page ? 16 : 6,
+              height: 6,
               decoration: BoxDecoration(
                 color: i == _page ? p.blue : p.ice2,
                 borderRadius: BorderRadius.circular(i == _page ? 5 : 4),
@@ -583,7 +826,7 @@ class _SlidesState extends State<_Slides> with TickerProviderStateMixin {
           ),
         ),
     ]);
-    return VGap([promo, dots], gap: 10);
+    return VGap([promo, dots], gap: 4);
   }
 }
 
@@ -663,7 +906,8 @@ Widget _prodHeroCard(BuildContext context, AppState s) {
       ], gap: 16),
       const SizedBox(height: 14),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('Quantity', style: tx(context, 15, w: FontWeight.w700)),
+        Expanded(
+            child: Text('Quantity', style: tx(context, 15, w: FontWeight.w700))),
         StepperCtl(qty: s.draft.qty, onChange: s.draftQty),
       ]),
       const SizedBox(height: 10),
@@ -811,27 +1055,22 @@ class _AddressFormState extends State<_AddressForm> {
       ]),
       AquaField('House no. / street / building', _street),
       AquaField('Barangay', _brgy),
-      AquaField('City / municipality (optional)', _city),
+      AquaField('City / municipality', _city),
       AquaField('Landmark or delivery note (optional)', _landmark),
       Btn(_lat == null ? 'Set pin on map' : 'Adjust pin on map',
           icon: 'pin',
           kind: _lat == null ? BtnKind.primary : BtnKind.alt,
           onPressed: () async {
+            // The pin is only the spot on the map; it never writes into the
+            // fields. A reverse-geocoded street is a guess — around here it
+            // resolved to the highway instead of the purok — and overwriting
+            // what the customer meant to type sent riders to the wrong gate.
             final picked = await openPinPickerPage(
               context,
               initial: _lat != null && _lng != null ? LatLng(_lat!, _lng!) : null,
+              resolveAddress: false,
             );
             if (picked == null) return;
-            // Auto-fill address fields the customer hasn't typed yet.
-            if (picked.street.isNotEmpty && _street.text.trim().isEmpty) {
-              _street.text = picked.street;
-            }
-            if (picked.brgy.isNotEmpty && _brgy.text.trim().isEmpty) {
-              _brgy.text = picked.brgy;
-            }
-            if (picked.city.isNotEmpty && _city.text.trim().isEmpty) {
-              _city.text = picked.city;
-            }
             setState(() {
               _lat = picked.point.latitude;
               _lng = picked.point.longitude;
@@ -840,24 +1079,22 @@ class _AddressFormState extends State<_AddressForm> {
       Text(
         _lat == null
             ? 'No map pin yet — add one so you can watch your rider approach on the live map.'
-            : 'Pin set (${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)}).'
-                '${_street.text.isEmpty && _brgy.text.isEmpty ? ' Add the street and barangay below.' : ' Address filled from the map — edit if needed.'}',
+            : 'Pin set (${_lat!.toStringAsFixed(5)}, ${_lng!.toStringAsFixed(5)}). '
+                'Type your address in the fields above — the pin does not fill them in.',
         style: tx(context, 13, color: _lat == null ? p.muted : p.ok, h: 1.4),
       ),
-      GestureDetector(
-        onTap: () => setState(() => _def = !_def),
-        child: Row(children: [
-          SizedBox(width: 22, height: 22,
-              child: Checkbox(value: _def, onChanged: (v) => setState(() => _def = v ?? false))),
-          const SizedBox(width: 10),
-          Expanded(child: Text('Use as my default address', style: tx(context, 15, w: FontWeight.w600))),
-        ]),
+      CheckRow(
+        value: _def,
+        onChanged: (v) => setState(() => _def = v),
+        label: 'Use as my default address',
       ),
       ErrLine(_err),
       Btn('Save Address', onPressed: () {
         final street = _street.text.trim(), brgy = _brgy.text.trim();
-        if (street.isEmpty || brgy.isEmpty) {
-          setState(() => _err = 'Enter the street and barangay so the rider can find you.');
+        final city = _city.text.trim();
+        if (street.isEmpty || brgy.isEmpty || city.isEmpty) {
+          setState(() => _err =
+              'Enter the street, barangay and city or municipality so the rider can find you.');
           return;
         }
         s.saveAddress(
@@ -865,7 +1102,7 @@ class _AddressFormState extends State<_AddressForm> {
           label: _label,
           street: street,
           brgy: brgy,
-          city: _city.text.trim(),
+          city: city,
           landmark: _landmark.text.trim(),
           def: _def,
           pick: widget.pick,
@@ -942,17 +1179,18 @@ class _NoteFormState extends State<_NoteForm> {
 ScreenView cartView(BuildContext context, AppState s) {
   if (s.cart.isEmpty) {
     return ScreenView(
-      content: EmptyView(
-        'Your cart is empty',
-        msg: 'Add refills or new gallons to get started.',
-        galType: 'refill',
-        padding: const EdgeInsets.fromLTRB(16, 36, 16, 28),
-        action: Btn('Order Water', onPressed: () {
-          s.draft.type = 'refill';
-          s.draft.qty = 1;
-          s.goScreen('order');
-        }),
-      ),
+      content: PadScroll(children: [
+        EmptyView(
+          'Your cart is empty',
+          msg: 'Add refills or new gallons to get started.',
+          galType: 'refill',
+          action: Btn('Order Water', onPressed: () {
+            s.draft.type = 'refill';
+            s.draft.qty = 1;
+            s.goScreen('order');
+          }),
+        ),
+      ]),
     );
   }
   final tot = s.sumItems(s.cart);
@@ -990,14 +1228,23 @@ Widget _cartLine(BuildContext context, AppState s, int i) {
     Expanded(child: VGap([
       Row(children: [
         Expanded(child: Text(s.nameOf(it.type), style: tx(context, 16, disp: true, w: FontWeight.w700))),
-        _iconBtnBox(context, 'trash', () => s.cartDelete(i), color: p.danger),
+        IconAction('trash', onTap: () => s.cartDelete(i), color: p.danger, label: 'Remove ${s.nameOf(it.type)}'),
       ]),
       Text('${peso(price)} / gallon · ${it.type == 'refill' ? 'bring your empty gallon' : 'filled gallon with container'}',
           style: numStyle(context, size: 13, color: p.muted)),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         StepperCtl(small: true, qty: it.qty, onChange: (d) => s.cartQty(i, d)),
-        Text(peso(price * it.qty),
-            style: tx(context, 15, disp: true, w: FontWeight.w700, fontFeatures: numFeatures)),
+        const SizedBox(width: 8),
+        // The stepper is a fixed width; a three-digit total at 1.3x text pushed
+        // the line past the card, so the money shrinks instead of clipping.
+        Flexible(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(peso(price * it.qty),
+                style: tx(context, 15, disp: true, w: FontWeight.w700, fontFeatures: numFeatures)),
+          ),
+        ),
       ]),
     ], gap: 4)),
   ], gap: 12));
@@ -1031,9 +1278,17 @@ Widget _summaryCard(BuildContext context, AppState s) {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(color: p.ice, borderRadius: BorderRadius.circular(14)),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('Total', style: tx(context, 20, disp: true, w: FontWeight.w700)),
-        Text(peso(tot),
-            style: tx(context, 20, disp: true, w: FontWeight.w700, fontFeatures: numFeatures)),
+        Flexible(
+            child: Text('Total', style: tx(context, 20, disp: true, w: FontWeight.w700))),
+        // Money labels scale down rather than clip on a 320dp screen at 1.3x.
+        Flexible(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(peso(tot),
+                style: tx(context, 20, disp: true, w: FontWeight.w700, fontFeatures: numFeatures)),
+          ),
+        ),
       ]),
     ),
   ]));
@@ -1216,6 +1471,7 @@ class _TickPopState extends State<_TickPop> with SingleTickerProviderStateMixin 
   @override
   Widget build(BuildContext context) {
     final p = Pal.of(context);
+    if (MediaQuery.disableAnimationsOf(context)) return _tick(p);
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) {
@@ -1224,19 +1480,23 @@ class _TickPopState extends State<_TickPop> with SingleTickerProviderStateMixin 
           opacity: t.clamp(0.0, 1.0),
           child: Transform.scale(
             scale: .6 + .4 * t,
-            child: Container(
-              width: 84, height: 84,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: Pal.btnBlue,
-                boxShadow: [BoxShadow(color: p.blueHi.withValues(alpha: .18), spreadRadius: 10)],
-              ),
-              child: Ic('check', size: 44, color: Colors.white),
-            ),
+            child: _tick(p),
           ),
         );
       },
+    );
+  }
+
+  Widget _tick(Pal p) {
+    return Container(
+      width: 84, height: 84,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: Pal.btnBlue,
+        boxShadow: [BoxShadow(color: p.blueHi.withValues(alpha: .18), spreadRadius: 10)],
+      ),
+      child: Ic('check', size: 44, color: Colors.white),
     );
   }
 }
@@ -1246,15 +1506,22 @@ Widget _confirmInfoCard(BuildContext context, AppState s, Order o) {
     background: Pal.of(context).ice,
     child: VGap([
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('Order number', style: tx(context, 15, color: Pal.of(context).muted)),
-        Flexible(child: Text(o.id, style: tx(context, 15, disp: true, w: FontWeight.w700, ls: .4))),
+        Flexible(
+            child: Text('Order number', style: tx(context, 15, color: Pal.of(context).muted))),
+        const SizedBox(width: 12),
+        Flexible(child: Text(o.id, textAlign: TextAlign.right,
+            style: tx(context, 15, disp: true, w: FontWeight.w700, ls: .4))),
       ]),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Text('Status', style: tx(context, 15, color: Pal.of(context).muted)),
         OrdBadge(statusState(o)),
       ]),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('Estimated arrival', style: tx(context, 15, color: Pal.of(context).muted)),
+        // The label is fixed text and the estimate can be a long range; let the
+        // label shrink instead of pushing the row past the card at 1.3x.
+        Flexible(
+            child: Text('Estimated arrival',
+                style: tx(context, 15, color: Pal.of(context).muted))),
         const SizedBox(width: 12),
         Flexible(child: Text(etaText(o), textAlign: TextAlign.right,
             style: numStyle(context, w: FontWeight.w700))),
@@ -1287,9 +1554,16 @@ Widget _confirmItemsCard(BuildContext context, AppState s, Order o) {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(color: p.ice, borderRadius: BorderRadius.circular(14)),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('Total', style: tx(context, 20, disp: true, w: FontWeight.w700)),
-        Text(peso(o.total),
-            style: tx(context, 20, disp: true, w: FontWeight.w700, fontFeatures: numFeatures)),
+        Flexible(
+            child: Text('Total', style: tx(context, 20, disp: true, w: FontWeight.w700))),
+        Flexible(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(peso(o.total),
+                style: tx(context, 20, disp: true, w: FontWeight.w700, fontFeatures: numFeatures)),
+          ),
+        ),
       ]),
     ),
   ]));
@@ -1322,25 +1596,28 @@ ScreenView trackView(BuildContext context, AppState s) {
   Order? o;
   if (s.trackId != null) {
     final f = _first(s.orders, (x) => x.id == s.trackId);
-    // A cancelled order must never hijack the tracking screen — view those
-    // from My Orders instead. Track Delivery always follows a live order.
-    if (f != null && s.mine(f) && !f.cancelled) o = f;
+    // An order the customer picked themselves — from My Orders, a finished
+    // order's Details button or a cancellation notice — is the one to show,
+    // cancelled or not. Falling through to another order made "Details" open
+    // somebody else's delivery.
+    if (f != null && s.mine(f)) o = f;
   }
   o ??= _first(mineList, isActive);
   o ??= mineList.isEmpty ? null : mineList.first;
   if (o == null) {
     return ScreenView(
-      content: EmptyView(
-        'No orders to track',
-        msg: 'Place an order and follow it here, step by step.',
-        galType: 'refill',
-        padding: const EdgeInsets.fromLTRB(16, 36, 16, 28),
-        action: Btn('Order Water', onPressed: () {
-          s.draft.type = 'refill';
-          s.draft.qty = 1;
-          s.goScreen('order');
-        }),
-      ),
+      content: PadScroll(children: [
+        EmptyView(
+          'No orders to track',
+          msg: 'Place an order and follow it here, step by step.',
+          galType: 'refill',
+          action: Btn('Order Water', onPressed: () {
+            s.draft.type = 'refill';
+            s.draft.qty = 1;
+            s.goScreen('order');
+          }),
+        ),
+      ]),
     );
   }
   final st = o.status;
@@ -1355,7 +1632,13 @@ ScreenView trackView(BuildContext context, AppState s) {
 
   add(_trackHeadCard(context, o, st, cn));
 
-  if (!cn && st >= 2 && o.address.hasPin) {
+  // The map appears as soon as somebody owns the delivery — a rider assigned
+  // while the water is still being prepared is already visible and already
+  // moving, so the customer never has to wait for status 3 to see them. It is
+  // gone again at the door: once the gallons are handed over there is nothing
+  // left to watch, and a last position frozen on the map reads like the rider
+  // is still out there.
+  if (!cn && st < 4 && o.address.hasPin && (st >= 2 || o.riderId != null)) {
     add(_LiveTrackCard(s: s, o: o));
   }
 
@@ -1412,9 +1695,10 @@ ScreenView trackView(BuildContext context, AppState s) {
   return ScreenView(content: PadScroll(children: kids));
 }
 
-/// Live delivery map for the track screen: station → pin with the rider
-/// marker moving. Uses the rider's real GPS when Firebase sync is active,
-/// otherwise the simulated position from the order's status timeline.
+/// Live delivery map for the track screen. The rider marker comes from the
+/// rider's real GPS and nothing else: there used to be a simulated position
+/// derived from the order's status stamps, which drew a marker gliding down
+/// the road whether or not anyone had left the station.
 class _LiveTrackCard extends StatefulWidget {
   final AppState s;
   final Order o;
@@ -1427,28 +1711,36 @@ class _LiveTrackCardState extends State<_LiveTrackCard> {
   StreamSubscription<RiderFix?>? _sub;
   RiderFix? _fix;
   String? _watchingRid;
+  Timer? _ageTick;
+  bool _retried = false;
 
   @override
   void initState() {
     super.initState();
     _watchOrderRider();
+    // This timer only refreshes the "12 s ago" line. The marker itself moves
+    // when a fix arrives on the stream, never on a clock.
+    _ageTick = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted && _fix != null) setState(() {});
+    });
   }
 
   void _watchOrderRider() {
     final rid = widget.o.riderId;
     _sub?.cancel();
     _sub = null;
-    _watchingRid = rid;
+    // Stored normalised: build() compares against `riderId ?? ''`, and a null
+    // here made every rebuild look like a new rider and resubscribe.
+    _watchingRid = rid ?? '';
     final stream = watchRider(rid ?? '');
-    if (stream != null) {
-      _sub = stream.listen((f) {
-        if (mounted) setState(() => _fix = f);
-      });
-    }
+    _sub = stream?.listen((f) {
+      if (mounted) setState(() => _fix = f);
+    });
   }
 
   @override
   void dispose() {
+    _ageTick?.cancel();
     _sub?.cancel();
     super.dispose();
   }
@@ -1460,54 +1752,73 @@ class _LiveTrackCardState extends State<_LiveTrackCard> {
     final o = widget.o;
     // The rider may get assigned while this screen is open (same Order object
     // is mutated in place), so re-check the subscription every rebuild.
-    if (o.riderId != _watchingRid) {
+    final wantRid = o.riderId ?? '';
+    if (wantRid != _watchingRid) {
       _fix = null;
+      _retried = false;
+      _watchOrderRider();
+    } else if (_sub == null && !_retried && firebaseReady && wantRid.isNotEmpty) {
+      // Firebase came online after this card mounted, so the first subscribe
+      // returned null. Try once more now that the socket is up.
+      _retried = true;
       _watchOrderRider();
     }
     final station = LatLng(s.station.lat!, s.station.lng!);
     final dest = LatLng(o.address.lat!, o.address.lng!);
-    final live = (_fix != null && _fix!.isFresh) ? _fix!.point : null;
-    final rider = live ??
-        simulatedRiderPos(
-          station: station,
-          o: o,
-          now: DateTime.now().millisecondsSinceEpoch,
-        );
+    final fix = _fix;
+    // A default-constructed fix (no lat/lng in the doc yet) is not a position;
+    // LatLng(0, 0) would put the rider in the Atlantic.
+    final point = (fix == null || (fix.lat == 0 && fix.lng == 0)) ? null : fix.point;
+    final fresh = point != null && fix!.isFresh;
+    final ageS = point == null
+        ? 0
+        : ((DateTime.now().millisecondsSinceEpoch - fix!.ts) / 1000).round();
+
+    // No alarm states on this card. A gap between fixes is normal — tunnels,
+    // dead zones, a rider who pocketed the phone — so the map keeps the last
+    // position and the caption quietly says when it last changed, instead of
+    // flashing "signal lost" at the customer.
+    final String note = fresh
+        ? 'Your rider\'s position, updated ${ageS < 5 ? 'just now' : '${_ago(ageS)} ago'}.'
+        : point != null
+            ? 'Your rider\'s last position, ${_ago(ageS)} ago. The map moves on as they ride.'
+            : wantRid.isEmpty
+                ? 'The station is matching a rider to this order.'
+                : firebaseReady
+                    ? 'Your rider\'s position appears here as soon as their phone reports it.'
+                    : 'Live tracking needs an internet connection.';
+
     return AquaCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         RowW([
-          SectionHead('Live Tracking', icon: 'map'),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: live != null ? p.mintBg : p.ice,
-              borderRadius: BorderRadius.circular(999),
+          Expanded(child: SectionHead('Live Tracking', icon: 'map')),
+          // Only a live fix earns a badge. Everything else is explained in the
+          // caption below, in words rather than a warning colour.
+          if (fresh)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: p.mintBg,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text('LIVE GPS',
+                  style: tx(context, 11, w: FontWeight.w700, ls: .6, color: p.mintFg)),
             ),
-            child: Text(
-              live != null ? 'LIVE GPS' : 'ESTIMATED',
-              style: tx(context, 11, w: FontWeight.w700, ls: .6,
-                  color: live != null ? p.mintFg : p.muted),
-            ),
-          ),
         ]),
         const SizedBox(height: 12),
-        DeliveryTrackMap(station: station, dest: dest, rider: rider),
-        const SizedBox(height: 10),
-        Text(
-          live != null
-              ? 'Showing your rider\'s real GPS position — updates every few seconds.'
-              : o.riderId == null
-                  ? 'Waiting for a rider to be assigned. The map will switch to live tracking as soon as one is on the way.'
-                  : (firebaseReady
-                      ? 'Rider found — waiting for their GPS. Make sure the rider app is open and moving.'
-                      : 'Showing the estimated rider position.'),
-          style: tx(context, 13, color: p.muted, h: 1.4),
+        DeliveryTrackMap(
+          station: station,
+          dest: dest,
+          rider: point,
         ),
+        const SizedBox(height: 10),
+        Text(note, style: tx(context, 13, color: p.muted, h: 1.4)),
       ]),
     );
   }
 }
+
+String _ago(int s) => s < 60 ? '${s}s' : '${s ~/ 60}m';
 
 Widget _trackHeadCard(BuildContext context, Order o, int st, bool cn) {
   final p = Pal.of(context);
@@ -1576,17 +1887,21 @@ Widget _routeStrip(BuildContext context, int st) {
           right: 0, top: 10,
           child: _routeBox(context, 'home', st >= 4),
         ),
-        Positioned(
-          left: 28 + (w - 56) * frac,
-          top: 21,
-          child: Transform.translate(
-            offset: const Offset(-17, 0),
-            child: Container(width: 34, height: 30,
-              decoration: BoxDecoration(color: p.blue, borderRadius: BorderRadius.circular(10)),
-              alignment: Alignment.center,
-              child: Ic('truck', size: 20, color: Colors.white)),
+        // Only draw the truck while it is between the two stops. At frac 0 it
+        // would sit on the station box and at frac 1 on the home box, hiding
+        // the icon that actually communicates the state.
+        if (frac > 0 && frac < 1)
+          Positioned(
+            left: 28 + (w - 56) * frac,
+            top: 21,
+            child: Transform.translate(
+              offset: const Offset(-17, 0),
+              child: Container(width: 34, height: 30,
+                decoration: BoxDecoration(color: p.blue, borderRadius: BorderRadius.circular(10)),
+                alignment: Alignment.center,
+                child: Ic('truck', size: 20, color: Colors.white)),
+            ),
           ),
-        ),
       ]),
     );
   });
@@ -1657,7 +1972,7 @@ Widget _trackStatusCard(BuildContext context, AppState s, Order o, int st, bool 
       const SizedBox(height: 14),
       Text(
         s.settings.autoDeliver
-            ? 'Status updates are simulated in this demo and move forward on their own.'
+            ? 'Confirmation and preparation are simulated in this demo; your rider marks the delivery stages.'
             : 'Delivery updates come from the station and your rider.',
         style: tx(context, 13, color: p.muted),
       ),
@@ -1763,9 +2078,17 @@ Widget _trackDetailsCard(BuildContext context, AppState s, Order o, int st, bool
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(color: p.ice, borderRadius: BorderRadius.circular(14)),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('Total', style: tx(context, 20, disp: true, w: FontWeight.w700)),
-        Text(peso(o.total),
-            style: tx(context, 20, disp: true, w: FontWeight.w700, fontFeatures: numFeatures)),
+        Flexible(
+            child: Text('Total', style: tx(context, 20, disp: true, w: FontWeight.w700))),
+        const SizedBox(width: 12),
+        Flexible(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(peso(o.total),
+                style: tx(context, 20, disp: true, w: FontWeight.w700, fontFeatures: numFeatures)),
+          ),
+        ),
       ]),
     ),
     const SizedBox(height: 10),
@@ -1837,11 +2160,14 @@ Widget _orderCard(BuildContext context, AppState s, Order o) {
   final p = Pal.of(context);
   final st = statusState(o);
   return AquaCard( child: VGap([
-    GestureDetector(
+    TapSurface(
       onTap: () {
         s.trackId = o.id;
         s.goScreen('track');
       },
+      semanticLabel: 'Order ${o.id}, ${BADGE[st]}',
+      semanticButton: false,
+      borderRadius: BorderRadius.circular(12),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(o.id, style: tx(context, 15, disp: true, w: FontWeight.w700, ls: .4)),
@@ -1860,18 +2186,22 @@ Widget _orderCard(BuildContext context, AppState s, Order o) {
       Text(peso(o.total), style: numStyle(context, w: FontWeight.w700)),
     ]),
     Wrap(spacing: 8, runSpacing: 8, children: [
+      // One primary action per order: an active order only needs "Track" (both
+      // buttons used to open the same screen), a finished one offers reorder +
+      // the full detail sheet.
       if (st < 4)
         Btn('Track', icon: 'pin', iconSize: 18, small: true, onPressed: () {
           s.trackId = o.id;
           s.goScreen('track');
         })
-      else
+      else ...[
         Btn('Order Again', icon: 'drop', iconSize: 18, small: true,
             onPressed: () => s.reorder(o.id)),
-      Btn('Details', kind: BtnKind.alt, small: true, onPressed: () {
-        s.trackId = o.id;
-        s.goScreen('track');
-      }),
+        Btn('Details', kind: BtnKind.alt, small: true, onPressed: () {
+          s.trackId = o.id;
+          s.goScreen('track');
+        }),
+      ],
     ]),
   ], gap: 10));
 }
@@ -1900,8 +2230,11 @@ ScreenView notifsView(BuildContext context, AppState s) {
 
 Widget _notifRow(BuildContext context, AppState s, Notif n) {
   final p = Pal.of(context);
-  return GestureDetector(
+  return TapSurface(
     onTap: () => s.openNotif(n.id, () {}),
+    semanticLabel: '${n.title}, ${n.body}',
+    semanticButton: false,
+    borderRadius: BorderRadius.circular(16),
     child: Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -1953,7 +2286,7 @@ ScreenView profileView(BuildContext context, AppState s) {
             const SizedBox(height: 4),
             Align(alignment: Alignment.centerLeft, child: const Tag('Customer')),
           ])),
-          _iconBtnBox(context, 'pencil', () => _profileEditSheet(context, s), color: p.link),
+          IconAction('pencil', onTap: () => _profileEditSheet(context, s), color: p.link, label: 'Edit profile'),
         ]),
         const SizedBox(height: 12),
         KvList(rows: [
@@ -1985,7 +2318,7 @@ ScreenView profileView(BuildContext context, AppState s) {
         ...addrKids,
       Btn('Log Out', icon: 'logout', iconSize: 20, kind: BtnKind.alt, onPressed: () {
         _confirmSheet(context,
-          title: 'Log out of AQUA?',
+          title: 'Log out of AQUARUN?',
           msg: 'Your saved addresses and orders stay on this device. Log back in any time.',
           label: 'Log Out',
           onConfirm: () => s.logout());
@@ -2021,15 +2354,15 @@ Widget _addressCard(BuildContext context, AppState s, Address a) {
               onPressed: () => s.setAddressDefault(a.id)),
         ),
     ])),
-    _iconBtnBox(context, 'pencil', () => _addressFormSheet(context, s, a, false), color: p.link),
-    _iconBtnBox(context, 'trash', () {
+    IconAction('pencil', onTap: () => _addressFormSheet(context, s, a, false), color: p.link, label: 'Edit ${a.label} address'),
+    IconAction('trash', onTap: () {
       _confirmSheet(context,
         title: 'Delete address?',
         msg: 'Remove ${a.label} (${a.line}) from your saved addresses?',
         label: 'Delete Address',
         danger: true,
         onConfirm: () => s.deleteAddress(a.id));
-    }, color: p.danger),
+    }, color: p.danger, label: 'Delete ${a.label} address'),
   ]));
 }
 
@@ -2064,7 +2397,9 @@ class _ProfileFormState extends State<_ProfileForm> {
     return VGap([
       AquaField('Full name', _name),
       AquaField('Mobile number', _phone, kbType: TextInputType.phone),
-      AquaField('Email', _email, kbType: TextInputType.emailAddress),
+      // The email is the account key (orders, saved addresses and the cloud
+      // inbox all hang off it), so it is shown but not editable here.
+      AquaField('Email · your sign-in', _email, kbType: TextInputType.emailAddress, readOnly: true),
       ErrLine(_err),
       Btn('Save Changes', onPressed: () {
         final err = s.updateCustomerProfile(
@@ -2122,20 +2457,26 @@ ScreenView settingsView(BuildContext context, AppState s) {
         SectionHead('Prices'),
         Row(children: [
           Expanded(child: Text('Refill Gallon', style: numStyle(context))),
-          Text('${peso(s.priceOf('refill'))} / gallon', style: numStyle(context, w: FontWeight.w700)),
+          Flexible(
+              child: Text('${peso(s.priceOf('refill'))} / gallon',
+                  textAlign: TextAlign.end, style: numStyle(context, w: FontWeight.w700))),
         ]),
         Row(children: [
           Expanded(child: Text('Buy Gallon', style: numStyle(context))),
-          Text('${peso(s.priceOf('buy'))} / gallon', style: numStyle(context, w: FontWeight.w700)),
+          Flexible(
+              child: Text('${peso(s.priceOf('buy'))} / gallon',
+                  textAlign: TextAlign.end, style: numStyle(context, w: FontWeight.w700))),
         ]),
         Row(children: [
           Expanded(child: Text('Delivery', style: tx(context, 15))),
-          Text('Free', style: numStyle(context, w: FontWeight.w700)),
+          Flexible(
+              child: Text('Free',
+                  textAlign: TextAlign.end, style: numStyle(context, w: FontWeight.w700))),
         ]),
       ], gap: 6)),
       Align(
         alignment: Alignment.center,
-        child: Text('AQUA Water Ordering & Delivery System · Customer app',
+        child: Text('AQUARUN · Customer app',
             textAlign: TextAlign.center, style: tx(context, 13, color: p.muted)),
       ),
     ]),

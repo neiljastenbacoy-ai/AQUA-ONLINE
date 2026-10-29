@@ -1,11 +1,11 @@
 {
-    "name": "aqua",
-    "short_name": "aqua",
+    "name": "AQUARUN",
+    "short_name": "AQUARUN",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Water refilling station app: order, track and deliver.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

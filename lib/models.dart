@@ -260,7 +260,7 @@ class Station {
   bool accepting, autoAssign;
   double? lat, lng; // station map pin — route start for live tracking
   Station({
-    this.name = 'AQUA Purified Water Station',
+    this.name = 'AQUARUN Purified Water Station',
     this.phone = '+63 917 800 1200',
     this.address = 'Villanueva, Misamis Oriental',
     this.open = '07:00',
@@ -271,7 +271,7 @@ class Station {
     this.lng = 124.8222,
   });
   factory Station.fromJson(json) => Station(
-        name: (json['name'] ?? 'AQUA Purified Water Station') as String,
+        name: (json['name'] ?? 'AQUARUN Purified Water Station') as String,
         phone: (json['phone'] ?? '+63 917 800 1200') as String,
         address: (json['address'] ?? 'Villanueva, Misamis Oriental') as String,
         open: (json['open'] ?? '07:00') as String,

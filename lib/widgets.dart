@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'art.dart';
 import 'constants.dart';
@@ -39,6 +40,352 @@ TextStyle para(
 
 typedef SelectCb = void Function(String value);
 
+/* ================= interaction primitives ================= */
+
+/// Pressable surface with the affordances a bare [GestureDetector] lacks: hover
+/// highlight, keyboard focus ring, Enter/Space activation and a pressed state.
+/// Every tappable control in the design system sits on one of these.
+class TapSurface extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final BorderRadius borderRadius;
+  final bool opaque;
+  final String? semanticLabel;
+  final bool? semanticToggled;
+  final bool? semanticSelected;
+  final bool semanticButton;
+  final FocusNode? focusNode;
+  const TapSurface({
+    super.key,
+    required this.child,
+    this.onTap,
+    this.borderRadius = const BorderRadius.all(Radius.circular(14)),
+    this.opaque = true,
+    this.semanticLabel,
+    this.semanticToggled,
+    this.semanticSelected,
+    this.semanticButton = true,
+    this.focusNode,
+  });
+
+  @override
+  State<TapSurface> createState() => _TapSurfaceState();
+}
+
+class _TapSurfaceState extends State<TapSurface> {
+  bool _hover = false;
+  bool _focus = false;
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    final enabled = widget.onTap != null;
+    final alpha = _down ? .18 : (_hover ? .09 : (_focus ? .05 : 0.0));
+    Widget body = Stack(
+      children: [
+        widget.child,
+        if (alpha > 0)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: widget.borderRadius,
+                  color: (p.isDark ? Colors.white : p.blue).withValues(
+                    alpha: alpha,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_focus)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: widget.borderRadius,
+                  border: Border.all(color: p.blueHi, width: 2),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+    body = FocusableActionDetector(
+      enabled: enabled,
+      focusNode: widget.focusNode,
+      mouseCursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+      },
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            widget.onTap?.call();
+            return null;
+          },
+        ),
+      },
+      onShowFocusHighlight: (v) {
+        if (v != _focus) setState(() => _focus = v);
+      },
+      onShowHoverHighlight: (v) {
+        if (v != _hover) setState(() => _hover = v);
+      },
+      child: GestureDetector(
+        behavior: widget.opaque
+            ? HitTestBehavior.opaque
+            : HitTestBehavior.deferToChild,
+        onTap: widget.onTap,
+        onTapDown: enabled ? (_) => setState(() => _down = true) : null,
+        onTapUp: enabled ? (_) => setState(() => _down = false) : null,
+        onTapCancel: enabled ? () => setState(() => _down = false) : null,
+        child: body,
+      ),
+    );
+    if (widget.semanticLabel == null &&
+        widget.semanticToggled == null &&
+        widget.semanticSelected == null) {
+      return body;
+    }
+    return Semantics(
+      container: true,
+      button: widget.semanticButton,
+      enabled: enabled,
+      toggled: widget.semanticToggled,
+      selected: widget.semanticSelected,
+      label: widget.semanticLabel,
+      child: body,
+    );
+  }
+}
+
+/// Single icon action (`.ibtn`): 44px hit target, optional count pip.
+class IconAction extends StatelessWidget {
+  final String icon;
+  final VoidCallback? onTap;
+  final double iconSize;
+  final double box;
+  final Color? color;
+  final String? label;
+  final String? pip;
+  final Color? pipBorder;
+  const IconAction(
+    this.icon, {
+    super.key,
+    this.onTap,
+    this.iconSize = 20,
+    this.box = 44,
+    this.color,
+    this.label,
+    this.pip,
+    this.pipBorder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    return TapSurface(
+      onTap: onTap,
+      semanticLabel: label,
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        width: box,
+        height: box,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            Ic(icon, size: iconSize, color: color ?? p.link),
+            if (pip != null)
+              Positioned(
+                top: 3,
+                right: 2,
+                child: Container(
+                  constraints: const BoxConstraints(minWidth: 18),
+                  height: 18,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: p.pip,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: pipBorder ?? p.card, width: 2),
+                  ),
+                  child: Text(
+                    pip!,
+                    style: tx(
+                      context,
+                      11,
+                      w: FontWeight.w800,
+                      color: Colors.white,
+                      h: 1,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Checkbox row (`.checkrow`) — one look for every opt-in toggle in the app.
+class CheckRow extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final String label;
+  const CheckRow({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    return TapSurface(
+      onTap: () => onChanged(!value),
+      semanticLabel: label,
+      semanticToggled: value,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: value ? p.blue : p.card,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: value ? p.blue : p.line, width: 2),
+              ),
+              alignment: Alignment.center,
+              child: value ? Ic('check', size: 15, color: Colors.white) : null,
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: Text(label, style: tx(context, 15, w: FontWeight.w600))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Search input matching [AquaField]: leading magnifier + a clear button.
+class AquaSearch extends StatelessWidget {
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final String hint;
+  const AquaSearch({
+    super.key,
+    required this.controller,
+    required this.onChanged,
+    this.hint = 'Search',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    OutlineInputBorder border(Color c) => OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: BorderSide(color: c, width: 1.5),
+    );
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, v, _) => TextField(
+        controller: controller,
+        onChanged: onChanged,
+        textInputAction: TextInputAction.search,
+        style: para(context),
+        decoration: InputDecoration(
+          hintText: hint,
+          isDense: true,
+          filled: true,
+          fillColor: p.card,
+          constraints: const BoxConstraints(minHeight: 50),
+          prefixIcon: Padding(
+            padding: const EdgeInsets.only(left: 14, right: 10),
+            child: Ic('search', size: 20, color: p.muted),
+          ),
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 0,
+            minHeight: 0,
+          ),
+          suffixIcon: v.text.isEmpty
+              ? null
+              : Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: IconButton(
+                    tooltip: 'Clear search',
+                    onPressed: () {
+                      controller.clear();
+                      onChanged('');
+                    },
+                    icon: Ic('close', size: 18, color: p.muted),
+                  ),
+                ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 15,
+          ),
+          enabledBorder: border(p.line),
+          focusedBorder: border(p.blueHi),
+        ),
+      ),
+    );
+  }
+}
+
+/* ================= phone frame ================= */
+
+const double kFrameWidth = 440;
+const double kFrameRadius = 30;
+
+/// Wide windows (desktop / web) keep the mobile layout inside a phone frame
+/// instead of stretching it across the whole window.
+bool framedLayout(BuildContext c) => MediaQuery.sizeOf(c).width >= 520;
+
+/// The frame itself. Shared by the shell, the drawer overlay, sheets and the
+/// full-screen pages that live above the shell (map pickers).
+Widget phoneFrame(
+  BuildContext c, {
+  required Widget child,
+  Color? background,
+  bool border = true,
+  bool shadow = true,
+}) {
+  final p = Pal.of(c);
+  return Center(
+    child: Container(
+      margin: const EdgeInsets.symmetric(vertical: 14),
+      width: kFrameWidth,
+      constraints: const BoxConstraints(maxHeight: 900),
+      decoration: BoxDecoration(
+        color: background ?? p.bg,
+        borderRadius: BorderRadius.circular(kFrameRadius),
+        border: border ? Border.all(color: p.line) : null,
+        boxShadow: shadow
+            ? const [
+                BoxShadow(
+                  color: Color(0x47102A64),
+                  offset: Offset(0, 20),
+                  blurRadius: 60,
+                ),
+              ]
+            : null,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: child,
+    ),
+  );
+}
+
 /* ================= buttons ================= */
 
 enum BtnKind { primary, alt, ghost, danger, green, outd }
@@ -50,6 +397,7 @@ class Btn extends StatelessWidget {
   final double iconSize;
   final BtnKind kind;
   final bool small;
+  final bool busy;
   const Btn(
     this.label, {
     super.key,
@@ -58,12 +406,13 @@ class Btn extends StatelessWidget {
     this.iconSize = 22,
     this.kind = BtnKind.primary,
     this.small = false,
+    this.busy = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final p = Pal.of(context);
-    final dis = onPressed == null;
+    final dis = onPressed == null || busy;
     Color? fgColor;
     BoxDecoration? deco;
     switch (kind) {
@@ -118,13 +467,25 @@ class Btn extends StatelessWidget {
         );
         fgColor = p.danger;
     }
-    final h = small ? 42.0 : 52.0;
+    // 44px keeps the small variant on the minimum comfortable touch target.
+    final h = small ? 44.0 : 52.0;
     final fSize = small ? 14.0 : 16.0;
     Widget row = Row(
       mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        if (icon != null) ...[
+        // The spinner replaces the icon so the label never jumps sideways.
+        if (busy) ...[
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(fgColor),
+            ),
+          ),
+          const SizedBox(width: 10),
+        ] else if (icon != null) ...[
           Ic(icon!, size: iconSize, color: fgColor),
           const SizedBox(width: 10),
         ],
@@ -144,34 +505,27 @@ class Btn extends StatelessWidget {
         ),
       ],
     );
-    return Semantics(
-      button: true,
-      child: GestureDetector(
+    return Opacity(
+      // Busy keeps full strength so the spinner reads; only a null callback
+      // (a field the form still needs) is drawn as disabled.
+      opacity: onPressed == null ? 0.5 : 1,
+      child: TapSurface(
         onTap: dis ? null : onPressed,
-        child: Opacity(
-          opacity: dis ? 0.5 : 1,
-          child: Container(
-            width: small ? null : double.infinity,
-            height: h,
-            alignment: Alignment.center,
-            padding: small
-                ? const EdgeInsets.symmetric(horizontal: 16)
-                : const EdgeInsets.symmetric(horizontal: 8),
-            decoration: deco,
-            child: row,
-          ),
+        semanticLabel: label,
+        borderRadius: BorderRadius.circular(small ? 14 : 16),
+        child: Container(
+          width: small ? null : double.infinity,
+          height: h,
+          alignment: Alignment.center,
+          padding: small
+              ? const EdgeInsets.symmetric(horizontal: 16)
+              : const EdgeInsets.symmetric(horizontal: 8),
+          decoration: deco,
+          child: row,
         ),
       ),
     );
   }
-}
-
-/// Container-based Btn wrapper with border for alt/outd variants.
-class BtnBox extends StatelessWidget {
-  final Widget child;
-  const BtnBox({super.key, required this.child});
-  @override
-  Widget build(BuildContext context) => child;
 }
 
 /* ================= segmented control ================= */
@@ -210,8 +564,11 @@ class SegBar extends StatelessWidget {
         children: [
           for (final it in items) ...[
             Expanded(
-              child: GestureDetector(
+              child: TapSurface(
                 onTap: () => onSelect(it.value),
+                semanticLabel: it.label,
+                semanticSelected: value == it.value,
+                borderRadius: BorderRadius.circular(14),
                 child: Container(
                   height: small ? 42 : 46,
                   decoration: BoxDecoration(
@@ -288,11 +645,22 @@ class FilterChips extends StatelessWidget {
       runSpacing: 8,
       children: [
         for (final it in items)
-          GestureDetector(
+          TapSurface(
             onTap: () => onSelect(it.value),
+            semanticLabel: it.label,
+            semanticSelected: value == it.value,
+            borderRadius: BorderRadius.circular(999),
             child: Container(
-              height: 38,
+              height: 44,
               padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: value == it.value ? p.blue : p.card,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: value == it.value ? p.blue : p.line,
+                  width: 1.5,
+                ),
+              ),
               // Center with widthFactor hugs the text; a plain alignment would
               // make the Container expand to full row width inside Wrap.
               child: Center(
@@ -306,14 +674,6 @@ class FilterChips extends StatelessWidget {
                     w: FontWeight.w700,
                     color: value == it.value ? Colors.white : p.ink,
                   ),
-                ),
-              ),
-              decoration: BoxDecoration(
-                color: value == it.value ? p.blue : p.card,
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(
-                  color: value == it.value ? p.blue : p.line,
-                  width: 1.5,
                 ),
               ),
             ),
@@ -339,10 +699,12 @@ class StepperCtl extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = Pal.of(context);
-    final bs = small ? 34.0 : 40.0;
+    final bs = small ? 38.0 : 42.0;
     Widget roundBtn(IconData? ic2, String name, bool plus, bool disabled) {
-      return GestureDetector(
+      return TapSurface(
         onTap: disabled ? null : () => onChange(plus ? 1 : -1),
+        semanticLabel: plus ? 'Increase quantity' : 'Decrease quantity',
+        borderRadius: BorderRadius.circular(999),
         child: Container(
           width: bs,
           height: bs,
@@ -425,6 +787,189 @@ class AquaCard extends StatelessWidget {
   }
 }
 
+/* ================= auth scaffolding ================= */
+
+/// Gradient hero shared by the three sign-in screens.
+///
+/// Capped near 190dp so the card's primary action stays above the fold on a
+/// 640dp-tall phone, and the artwork sits *behind* the copy (bleeding off the
+/// right edge) instead of taking a column beside it — the old side-by-side
+/// row ate 278dp and pushed the Log In button off-screen.
+class AuthHero extends StatelessWidget {
+  final String title;
+  final String sub;
+  final Widget? art;
+  const AuthHero({super.key, required this.title, required this.sub, this.art});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(gradient: Pal.auth),
+      child: ClipRect(
+        child: Stack(
+          children: [
+            if (art != null)
+              Positioned(
+                right: -20,
+                bottom: 22,
+                child: Opacity(opacity: 0.3, child: art!),
+              ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                  18, 16 + MediaQuery.of(context).padding.top, 18, 56),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const AquaLogo(color: Colors.white),
+                  const SizedBox(height: 12),
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: tx(context, 24,
+                        disp: true, w: FontWeight.w700, color: Colors.white, h: 1.1),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    sub,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: para(context,
+                        color: Colors.white.withValues(alpha: 0.9)),
+                  ),
+                ],
+              ),
+            ),
+            // The wave owns the last 46dp, so the card can tuck under it.
+            Positioned(
+                left: 0, right: 0, bottom: 0, child: Wave(height: 46, w2: p.bg)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Scroll body that tucks its content up under the hero wave.
+Widget authOverlapScroll(Widget child, {double overlap = 26, double bottom = 28}) {
+  return Expanded(
+    child: SingleChildScrollView(
+      clipBehavior: Clip.none,
+      padding: EdgeInsets.fromLTRB(16, 0, 16, bottom + overlap),
+      child: Transform.translate(
+        offset: Offset(0, -overlap),
+        // Same height as top padding: the band above the viewport can never be
+        // tapped, so it stays empty instead of covering the first control.
+        child: Padding(padding: EdgeInsets.only(top: overlap), child: child),
+      ),
+    ),
+  );
+}
+
+/// Inline text action (link colour, 36dp tall) used around the sign-in card.
+class TxtLink extends StatelessWidget {
+  final String label;
+  final String? icon;
+  final VoidCallback? onTap;
+  const TxtLink(this.label, {super.key, this.onTap, this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    return TapSurface(
+      onTap: onTap,
+      semanticLabel: label,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Ic(icon!, size: 15, color: p.link),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: tx(context, 13.5, w: FontWeight.w700, color: p.link),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Staff sign-in" switcher.
+///
+/// The role belongs to the account, not to the sign-in decision, so it lives
+/// behind one link instead of occupying the top third of the card.
+Future<void> showAuthRoleSheet(BuildContext context, AppState s) {
+  return showAquaSheet<void>(
+    context,
+    title: 'Who is signing in?',
+    body: VGap([
+      _RoleRow(s, 'customer', 'Customer', 'Order and track your water', 'user'),
+      _RoleRow(s, 'rider', 'Rider', 'See and run assigned deliveries', 'truck'),
+      _RoleRow(s, 'admin', 'Station admin', 'Orders, riders and stock', 'store'),
+    ], gap: 10),
+  );
+}
+
+class _RoleRow extends StatelessWidget {
+  final AppState s;
+  final String role;
+  final String label;
+  final String sub;
+  final String icon;
+  const _RoleRow(this.s, this.role, this.label, this.sub, this.icon);
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    final on = s.authRole == role;
+    return TapSurface(
+      onTap: () {
+        Navigator.of(context).pop();
+        s.authRole = role;
+        s.authTab = 'login';
+        s.updateUI();
+      },
+      semanticLabel: 'Sign in as $label',
+      semanticSelected: on,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: on ? p.ice : p.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: on ? p.blueHi : p.line, width: 1.5),
+        ),
+        child: Row(children: [
+          Ic(icon, size: 22, color: p.link),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: tx(context, 15, disp: true, w: FontWeight.w700)),
+              Text(sub,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: para(context, color: p.muted, size: 13)),
+            ]),
+          ),
+          if (on) Ic('check', size: 18, color: p.blue),
+        ]),
+      ),
+    );
+  }
+}
+
 /// `.pad .stack` — vertical content column with 14px gaps on 16/28 padding.
 class PadScroll extends StatelessWidget {
   final List<Widget> children;
@@ -433,18 +978,33 @@ class PadScroll extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      controller: controller,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < children.length; i++) ...[
-            children[i],
-            if (i != children.length - 1) const SizedBox(height: 14),
-          ],
-        ],
-      ),
+    return LayoutBuilder(
+      builder: (context, c) {
+        // Fill the viewport even when the content is short. A scroll view that
+        // shrink-wraps gets centred by ancestor Stacks (the screen switcher),
+        // which floated empty states and filter rows to the middle of the
+        // screen instead of pinning them under the app bar.
+        final padV = 16.0 + 28.0;
+        final minH = c.maxHeight.isFinite
+            ? (c.maxHeight - padV).clamp(0.0, double.infinity)
+            : 0.0;
+        return SingleChildScrollView(
+          controller: controller,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: minH),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < children.length; i++) ...[
+                  children[i],
+                  if (i != children.length - 1) const SizedBox(height: 14),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -511,6 +1071,8 @@ class SectionHead extends StatelessWidget {
       builder: (context, constraints) {
         final titleWidget = Text(
           title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: tx(context, 18, disp: true, w: FontWeight.w700),
         );
         return Row(
@@ -529,6 +1091,317 @@ class SectionHead extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/* ================= dashboard kit ================= */
+
+/// Gradient header shared by the three dashboards.
+///
+/// The heroes it replaces were 176–188dp of greeting before the first useful
+/// pixel (37% of a 640dp phone). This one is ~132dp and only grows when a
+/// control rides under the title. It owns its wave so every dashboard tucks
+/// its body under the header the same way the sign-in screens do.
+class DashHero extends StatelessWidget {
+  final String title;
+  final String sub;
+  final Widget? art;
+  final Widget? trailing;
+  const DashHero({
+    super.key,
+    required this.title,
+    required this.sub,
+    this.art,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 132),
+      decoration: const BoxDecoration(gradient: Pal.hero),
+      child: Stack(
+        children: [
+          // Behind the copy at 26%: texture, not a column that eats width.
+          if (art != null)
+            Positioned(
+              right: -8,
+              bottom: 22,
+              child: Opacity(opacity: 0.26, child: art!),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 42),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tx(context, 24,
+                      disp: true, w: FontWeight.w700, color: Colors.white, h: 1.15),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  sub,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: para(context,
+                      color: Colors.white.withValues(alpha: 0.9), size: 13.5),
+                ),
+                if (trailing != null) ...[
+                  const SizedBox(height: 12),
+                  trailing!,
+                ],
+              ],
+            ),
+          ),
+          Positioned(left: 0, right: 0, bottom: 0, child: Wave(height: 40, w2: p.bg)),
+        ],
+      ),
+    );
+  }
+}
+
+/// One figure in a [StatRow]: icon + value on the first line, label under it.
+///
+/// Values stay in ink so four tiles read as one set of numbers; the accent
+/// colour lives on the icon and the tile background.
+class StatTile extends StatelessWidget {
+  final String icon;
+  final String value;
+  final String label;
+  final Color bg;
+  final Color fg;
+  final VoidCallback? onTap;
+  const StatTile({
+    super.key,
+    required this.icon,
+    required this.value,
+    required this.label,
+    required this.bg,
+    required this.fg,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    return TapSurface(
+      onTap: onTap,
+      semanticLabel: '$value $label',
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 68),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 9),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: p.shadow,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Ic(icon, size: 15, color: fg),
+                const SizedBox(width: 5),
+                Expanded(
+                  // A four-digit count or "₱2.4k" shrinks instead of overflowing.
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      value,
+                      maxLines: 1,
+                      style: numStyle(context,
+                          size: 21, w: FontWeight.w700, disp: true, color: p.ink),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: tx(context, 11.5, w: FontWeight.w700, color: p.muted, h: 1.15),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Evenly split row of [StatTile]s. Four is the most that stays legible at
+/// 320dp with large text.
+class StatRow extends StatelessWidget {
+  final List<StatTile> tiles;
+  const StatRow(this.tiles, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 0; i < tiles.length; i++) ...[
+          Expanded(child: tiles[i]),
+          if (i != tiles.length - 1) const SizedBox(width: 8),
+        ],
+      ],
+    );
+  }
+}
+
+/// A dashboard task rather than a notification: accent bar, icon, what needs
+/// doing and the verb that does it. The whole row is the tap target.
+class ActionRow extends StatelessWidget {
+  final Color accent;
+  final String icon;
+  final String title;
+  final String? sub;
+  final String verb;
+  final VoidCallback onTap;
+  const ActionRow({
+    super.key,
+    required this.accent,
+    required this.icon,
+    required this.title,
+    this.sub,
+    required this.verb,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Pal.of(context);
+    return TapSurface(
+      onTap: onTap,
+      semanticLabel: '$title. $verb',
+      semanticButton: false,
+      borderRadius: BorderRadius.circular(16),
+      // Flutter only allows a borderRadius on a uniform-color border, so the
+      // rounded corners come from a clip while the left bar stays a border.
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: p.shadow,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: p.card,
+              border: Border(
+                left: BorderSide(color: accent, width: 5),
+                top: BorderSide(color: p.line),
+                right: BorderSide(color: p.line),
+                bottom: BorderSide(color: p.line),
+              ),
+            ),
+            child: Row(
+              children: [
+                Ic(icon, size: 20, color: accent),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: tx(context, 14, w: FontWeight.w700, h: 1.25),
+                      ),
+                      if (sub != null)
+                        Text(
+                          sub!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: para(context, color: p.muted, size: 12.5),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  verb,
+                  style: tx(context, 12.5, w: FontWeight.w800, color: p.link),
+                ),
+                Ic('chev', size: 16, color: p.link),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Section title plus its "see all"-style trailing action (the row every
+/// dashboard repeats).
+class SectionRow extends StatelessWidget {
+  final String title;
+  final String? action;
+  final VoidCallback? onTap;
+  const SectionRow(this.title, {super.key, this.action, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: SectionHead(title)),
+        if (action != null)
+          Btn(action!, kind: BtnKind.ghost, small: true, onPressed: onTap),
+      ],
+    );
+  }
+}
+
+/// Dependency-free bar strip for "last 7 days" trends.
+class Sparkline extends StatelessWidget {
+  final List<double> values;
+  final double height;
+  final Color color;
+  const Sparkline(this.values,
+      {super.key, this.height = 36, this.color = Colors.white});
+
+  @override
+  Widget build(BuildContext context) {
+    var maxV = 0.0;
+    for (final v in values) {
+      if (v > maxV) maxV = v;
+    }
+    const floor = 5.0;
+    return SizedBox(
+      height: height,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (var i = 0; i < values.length; i++) ...[
+            if (i > 0) const SizedBox(width: 5),
+            Expanded(
+              child: Container(
+                height: maxV <= 0
+                    ? floor
+                    : floor + (values[i] / maxV) * (height - floor),
+                decoration: BoxDecoration(
+                  color: color.withValues(
+                      alpha: i == values.length - 1 ? 0.95 : 0.5),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -560,28 +1433,37 @@ class OrdBadge extends StatelessWidget {
       4 => p.s4fg,
       _ => p.s5fg,
     };
-    return Container(
-      height: 26,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+    return LayoutBuilder(
+      builder: (context, c) {
+        final labelWidget = Text(
+          label ?? BADGE[s],
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: tx(context, 12, w: FontWeight.w800, color: fg, ls: 0.2),
+        );
+        return Container(
+          constraints: const BoxConstraints(minHeight: 26),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(999),
           ),
-          const SizedBox(width: 6),
-          Text(
-            label ?? BADGE[s],
-            style: tx(context, 12, w: FontWeight.w800, color: fg, ls: 0.2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 6),
+              // Narrow slots (card headers beside buttons/images) must truncate
+              // the label rather than paint overflow stripes.
+              if (c.hasBoundedWidth) Flexible(child: labelWidget) else labelWidget,
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -644,8 +1526,10 @@ class RadioRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = Pal.of(context);
-    return GestureDetector(
+    return TapSurface(
       onTap: onTap,
+      semanticToggled: checked,
+      borderRadius: BorderRadius.circular(14),
       child: Container(
         constraints: const BoxConstraints(minHeight: 54),
         width: double.infinity,
@@ -708,8 +1592,10 @@ class RowBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = Pal.of(context);
-    return GestureDetector(
+    return TapSurface(
       onTap: onTap,
+      semanticLabel: '$title, $value',
+      borderRadius: BorderRadius.circular(14),
       child: Container(
         constraints: const BoxConstraints(minHeight: 54),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -818,13 +1704,22 @@ class Avatar extends StatelessWidget {
 class AquaSwitch extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
-  const AquaSwitch({super.key, required this.value, required this.onChanged});
+  final String? label;
+  const AquaSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.label,
+  });
 
   @override
   Widget build(BuildContext context) {
     final p = Pal.of(context);
-    return GestureDetector(
+    return TapSurface(
       onTap: () => onChanged(!value),
+      semanticLabel: label,
+      semanticToggled: value,
+      borderRadius: BorderRadius.circular(999),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         width: 54,
@@ -862,6 +1757,7 @@ class AquaField extends StatelessWidget {
   final String label;
   final TextEditingController controller;
   final TextInputType? kbType;
+  final TextInputAction? kbAction;
   final bool obscure;
   final bool eyeToggle;
   final String? hint;
@@ -869,11 +1765,21 @@ class AquaField extends StatelessWidget {
   final int maxLines;
   final double? minHeight;
   final String? Function(String)? validator;
+  final ValueChanged<String>? onChanged;
+  final FocusNode? focusNode;
+  final String? error;
+  final Iterable<String>? autofillHints;
+  final ValueChanged<String>? onSubmitted;
+  /// Shows a value the user owns but must not retype in place — an account
+  /// email, for instance. The field keeps its label and styling but takes no
+  /// input, so there is no half-valid edit to save.
+  final bool readOnly;
   const AquaField(
     this.label,
     this.controller, {
     super.key,
     this.kbType,
+    this.kbAction,
     this.obscure = false,
     this.eyeToggle = false,
     this.hint,
@@ -881,6 +1787,12 @@ class AquaField extends StatelessWidget {
     this.maxLines = 1,
     this.minHeight,
     this.validator,
+    this.onChanged,
+    this.focusNode,
+    this.error,
+    this.autofillHints,
+    this.onSubmitted,
+    this.readOnly = false,
   });
 
   @override
@@ -909,9 +1821,17 @@ class AquaField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: tx(context, 13, w: FontWeight.w700, color: p.muted, ls: 0.2),
+        Semantics(
+          label: '$label text field',
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: tx(context, 13,
+                w: FontWeight.w700,
+                color: error != null ? p.danger : p.muted,
+                ls: 0.2),
+          ),
         ),
         const SizedBox(height: 6),
         field,
@@ -920,36 +1840,51 @@ class AquaField extends StatelessWidget {
   }
 
   Widget _inp(BuildContext context, Pal p, {required bool suffixPad}) {
-    return TextField(
-      controller: controller,
-      keyboardType: kbType,
-      obscureText: obscure,
-      maxLines: maxLines,
-      style: para(context),
-      decoration: InputDecoration(
-        hintText: hint,
-        isDense: true,
-        filled: true,
-        fillColor: p.card,
-        contentPadding: maxLines > 1
-            ? const EdgeInsets.all(14)
-            : const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
-        constraints: BoxConstraints(minHeight: minHeight ?? 50),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: p.line, width: 1.5),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: p.blueHi, width: 1.5),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: p.danger, width: 1.5),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: p.danger, width: 1.5),
+    return Semantics(
+      textField: true,
+      enabled: controller.text.isNotEmpty || hint != null,
+      child: TextField(
+        controller: controller,
+        keyboardType: kbType,
+        textInputAction: kbAction ?? TextInputAction.next,
+        obscureText: obscure,
+        readOnly: readOnly,
+        maxLines: maxLines,
+        onChanged: onChanged,
+        onSubmitted: onSubmitted,
+        autofillHints: autofillHints,
+        focusNode: focusNode,
+        style: para(context),
+        decoration: InputDecoration(
+          hintText: hint,
+          isDense: true,
+          filled: true,
+          fillColor: readOnly ? p.ice : p.card,
+          // Field-level messages live under the box (and turn its border red)
+          // instead of pushing a single form-wide error line around.
+          errorText: error,
+          errorMaxLines: 2,
+          errorStyle: tx(context, 12.5, w: FontWeight.w700, color: p.danger),
+          contentPadding: maxLines > 1
+              ? const EdgeInsets.all(14)
+              : const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+          constraints: BoxConstraints(minHeight: minHeight ?? 50),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: p.line, width: 1.5),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: p.blueHi, width: 1.5),
+          ),
+          errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: p.danger, width: 1.5),
+          ),
+          focusedErrorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: p.danger, width: 1.5),
+          ),
         ),
       ),
     );
@@ -993,11 +1928,22 @@ class Chips extends StatelessWidget {
       runSpacing: 8,
       children: [
         for (final o in options)
-          GestureDetector(
+          TapSurface(
             onTap: () => onSelect(o),
+            semanticLabel: o,
+            semanticSelected: value == o,
+            borderRadius: BorderRadius.circular(wide ? 14 : 999),
             child: Container(
-              height: wide ? 46 : 42,
+              height: wide ? 46 : 44,
               padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: value == o ? p.blue : p.card,
+                borderRadius: BorderRadius.circular(wide ? 14 : 999),
+                border: Border.all(
+                  color: value == o ? p.blue : p.line,
+                  width: 1.5,
+                ),
+              ),
               // wide fills the row; otherwise Center with widthFactor hugs the
               // label (plain alignment would stretch every chip full width).
               child: Center(
@@ -1010,14 +1956,6 @@ class Chips extends StatelessWidget {
                     w: FontWeight.w700,
                     color: value == o ? Colors.white : p.ink,
                   ),
-                ),
-              ),
-              decoration: BoxDecoration(
-                color: value == o ? p.blue : p.card,
-                borderRadius: BorderRadius.circular(wide ? 14 : 999),
-                border: Border.all(
-                  color: value == o ? p.blue : p.line,
-                  width: 1.5,
                 ),
               ),
             ),
@@ -1082,35 +2020,47 @@ class DockTotal extends StatelessWidget {
         color: p.ice,
         borderRadius: BorderRadius.circular(14),
       ),
+      // Both halves give way: the label ellipsises and the amount scales down,
+      // so a long count or a 1.3x text scale can never overflow the dock.
       child: Row(
         children: [
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: main,
-                  style: tx(context, 15, w: FontWeight.w700),
-                ),
-                TextSpan(
-                  text: ' ',
-                  style: tx(context, 15, w: FontWeight.w700),
-                ),
-                TextSpan(
-                  text: small,
-                  style: tx(context, 13, w: FontWeight.w600, color: p.muted),
-                ),
-              ],
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: main,
+                    style: tx(context, 15, w: FontWeight.w700),
+                  ),
+                  TextSpan(
+                    text: ' ',
+                    style: tx(context, 15, w: FontWeight.w700),
+                  ),
+                  TextSpan(
+                    text: small,
+                    style: tx(context, 13, w: FontWeight.w600, color: p.muted),
+                  ),
+                ],
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          const Spacer(),
-          Text(
-            amount,
-            style: tx(
-              context,
-              19,
-              disp: true,
-              w: FontWeight.w700,
-              fontFeatures: const [FontFeature.tabularFigures()],
+          const SizedBox(width: 10),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: Text(
+                amount,
+                style: tx(
+                  context,
+                  19,
+                  disp: true,
+                  w: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
             ),
           ),
         ],
@@ -1150,12 +2100,16 @@ class EmptyView extends StatelessWidget {
             textAlign: TextAlign.center,
             style: tx(context, 20, disp: true, w: FontWeight.w700),
           ),
-          const SizedBox(height: 10),
-          Text(
-            msg,
-            textAlign: TextAlign.center,
-            style: para(context, color: p.muted),
-          ),
+          // "not found" states pass no message; skip the gap entirely instead of
+          // leaving an empty paragraph behind the title.
+          if (msg.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              msg,
+              textAlign: TextAlign.center,
+              style: para(context, color: p.muted),
+            ),
+          ],
           if (action != null) ...[const SizedBox(height: 14), action!],
         ],
       ),
@@ -1176,53 +2130,72 @@ Future<T?> showAquaSheet<T>(
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (ctx) {
+      final framed = framedLayout(ctx);
+      // Keep sheets inside the phone frame on wide windows: same width, same
+      // bottom corners, 14px of stage showing underneath.
+      final maxH = MediaQuery.of(ctx).size.height * 0.88;
+      final sheet = Container(
+        decoration: BoxDecoration(
+          color: p.card,
+          borderRadius: framed
+              ? const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                  bottom: Radius.circular(kFrameRadius),
+                )
+              : const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: p.line,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  title,
+                  style: tx(ctx, 20, disp: true, w: FontWeight.w700),
+                ),
+              ),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+                child: body,
+              ),
+            ),
+          ],
+        ),
+      );
       // Lift the sheet above the on-screen keyboard so form fields stay in a
       // fixed, visible position while typing.
       return Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-        child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(ctx).size.height * 0.88,
-        ),
-        child: Container(
-          decoration: BoxDecoration(
-            color: p.card,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 10),
-              Center(
-                child: Container(
-                  width: 44,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: p.line,
-                    borderRadius: BorderRadius.circular(3),
+        child: framed
+            ? Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: SizedBox(
+                  width: kFrameWidth,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: maxH),
+                    child: sheet,
                   ),
                 ),
+              )
+            : ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxH),
+                child: sheet,
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    title,
-                    style: tx(ctx, 20, disp: true, w: FontWeight.w700),
-                  ),
-                ),
-              ),
-              Flexible(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
-                  child: body,
-                ),
-              ),
-            ],
-          ),
-        ),
-        ),
       );
     },
   );
@@ -1290,18 +2263,6 @@ class SidePanel extends StatelessWidget {
             ),
           ),
           AquaLogo(lg: true, color: Colors.white),
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              'Water Ordering & Delivery System',
-              maxLines: 2,
-              style: para(
-                context,
-                color: Colors.white.withValues(alpha: 0.85),
-                size: 13.5,
-              ),
-            ),
-          ),
           const SizedBox(height: 20),
           Row(
             children: [
@@ -1402,13 +2363,17 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final p = Pal.of(context);
+    return TapSurface(
       onTap: onTap,
+      semanticLabel: label,
+      semanticSelected: active,
+      borderRadius: BorderRadius.circular(14),
       child: Container(
         height: 50,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
-          color: active ? Pal.light.blueHi : Colors.transparent,
+          color: active ? p.blueHi : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(

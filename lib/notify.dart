@@ -1,6 +1,6 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-/// Real Android system notifications for AQUA order events.
+/// Real Android system notifications for AQUARUN order events.
 ///
 /// The app generates notifications for three audiences (customer, rider,
 /// admin); AppState decides which ones are relevant to the signed-in role and
@@ -13,7 +13,7 @@ class PhoneNotify {
   static int _id = 1;
 
   static const String _channelId = 'aqua_orders';
-  static const String _channelName = 'AQUA order updates';
+  static const String _channelName = 'AQUARUN order updates';
 
   static Future<void> init() async {
     if (_ready) return;

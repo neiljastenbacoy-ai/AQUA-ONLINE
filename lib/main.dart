@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'art.dart';
 import 'constants.dart';
 import 'firebase_boot.dart';
-import 'icons.dart';
 import 'notify.dart';
 import 'palette.dart';
 import 'state.dart';
@@ -61,13 +61,27 @@ class _AquaAppState extends State<AquaApp> {
       builder: (context, _) {
         final theme = appState.settings.theme;
         return MaterialApp(
-          title: 'AQUA Water Ordering',
+          title: 'AQUARUN',
           debugShowCheckedModeBanner: false,
           themeMode: theme == 'light'
               ? ThemeMode.light
               : (theme == 'dark' ? ThemeMode.dark : ThemeMode.system),
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),
+          // Custom controls use fixed heights, so keep text scaling in the range
+          // the layout was designed for instead of letting it clip labels.
+          builder: (context, child) {
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(
+                textScaler: mq.textScaler.clamp(
+                  minScaleFactor: 0.9,
+                  maxScaleFactor: 1.3,
+                ),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
           home: RootShell(),
         );
       },
@@ -100,6 +114,68 @@ class _AquaAppState extends State<AquaApp> {
 
 /* ================= root shell ================= */
 
+/// Animated host for one screen.
+///
+/// The slot must fill its box: `AnimatedSwitcher`'s default layout builder puts
+/// the child in a centred `Stack`, which floats any screen shorter than the
+/// viewport (empty states, filter-only lists) in the middle of the page instead
+/// of pinning it under the app bar.
+class ScreenSlot extends StatelessWidget {
+  final String name;
+  final Widget child;
+  final Duration duration;
+  const ScreenSlot({
+    super.key,
+    required this.name,
+    required this.child,
+    required this.duration,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: duration,
+      reverseDuration: duration,
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      layoutBuilder: (currentChild, previousChildren) => Stack(
+        fit: StackFit.expand,
+        children: [
+          ...previousChildren,
+          ?currentChild,
+        ],
+      ),
+      transitionBuilder: (child, animation) {
+        final position =
+            Tween<Offset>(
+              begin: const Offset(0.025, 0),
+              end: Offset.zero,
+            ).animate(
+              CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOutCubic,
+                reverseCurve: Curves.easeInCubic,
+              ),
+            );
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(position: position, child: child),
+        );
+      },
+      child: KeyedSubtree(
+        key: ValueKey('screen-$name-${child.runtimeType}'),
+        child: child,
+      ),
+    );
+  }
+}
+
+/// True when the system back gesture should leave the app rather than be
+/// consumed by the shell: sign-in, or the signed-in role's home with nothing
+/// stacked on top of it.
+bool backExitsApp(String screen, int stackDepth, String home) =>
+    screen == 'auth' || (stackDepth <= 1 && screen == home);
+
 class RootShell extends StatefulWidget {
   const RootShell({super.key});
   @override
@@ -130,6 +206,12 @@ class _RootShellState extends State<RootShell> {
         }
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _toastTimer?.cancel();
+    super.dispose();
   }
 
   void _showToast(String msg) {
@@ -244,41 +326,32 @@ class _RootShellState extends State<RootShell> {
     final p = Pal.of(context);
     final name = appState.screen;
     final sv = _screenView(context, name);
-    final stage = MediaQuery.of(context).size;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
 
     Widget app = Column(
       children: [
         if (!sv.bare) _appBar(context, name),
         Expanded(
-          child: AnimatedSwitcher(
-            duration: reduceMotion ? Duration.zero : screenTransitionDuration,
-            reverseDuration: reduceMotion
-                ? Duration.zero
-                : screenTransitionDuration,
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, animation) {
-              final position =
-                  Tween<Offset>(
-                    begin: const Offset(0.025, 0),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                      reverseCurve: Curves.easeInCubic,
-                    ),
-                  );
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(position: position, child: child),
-              );
-            },
-            child: KeyedSubtree(
-              key: ValueKey('screen-$name-${sv.content.runtimeType}'),
-              child: sv.content,
-            ),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: ScreenSlot(
+                  name: name,
+                  duration: reduceMotion
+                      ? Duration.zero
+                      : screenTransitionDuration,
+                  child: sv.content,
+                ),
+              ),
+              // The toast sits in the content area, so it can never land on top
+              // of a dock (two-row docks are taller than the old fixed offset).
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 16,
+                child: _toast(context),
+              ),
+            ],
           ),
         ),
         if (sv.dock != null) ...[
@@ -293,12 +366,7 @@ class _RootShellState extends State<RootShell> {
                 ),
               ],
             ),
-            padding: EdgeInsets.fromLTRB(
-              16,
-              12,
-              16,
-              12 + MediaQuery.of(context).padding.bottom * 0.0,
-            ),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
             child: SafeArea(
               top: false,
               child: Column(
@@ -314,86 +382,86 @@ class _RootShellState extends State<RootShell> {
     // On wide screens: centered phone frame like the web preview. Height is
     // capped so tall windows don't stretch the app into a skinny column of
     // blank space.
-    if (stage.width >= 520) {
-      app = Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 14),
-          width: 440,
-          constraints: const BoxConstraints(maxHeight: 900),
-          decoration: BoxDecoration(
-            color: p.bg,
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: p.line),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x47102A64),
-                offset: Offset(0, 20),
-                blurRadius: 60,
-              ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: app,
-        ),
-      );
+    if (framedLayout(context)) {
+      app = phoneFrame(context, child: app, background: p.bg);
     }
 
     return PopScope(
-      canPop: false,
+      // Back walks the stack, and only leaves the app from a screen that has
+      // nothing behind it: the role's home, or sign-in. It used to swallow the
+      // gesture everywhere, so the home screen had no way out at all.
+      canPop: backExitsApp(name, appState.stack.length, appState.homeOf()) &&
+          !sideOpen,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         if (sideOpen) return _closeSide();
         if (appState.stack.length > 1 || appState.screen != appState.homeOf()) {
+          if (appState.screen == 'auth') {
+            return;
+          }
           appState.back();
         }
       },
-      child: Scaffold(
-        backgroundColor: p.stage,
-        body: Stack(
-          children: [
-            Positioned.fill(
-              child: SafeArea(top: false, bottom: false, child: app),
-            ),
-            if (sideOpen) ..._sideOverlay(),
-            // toast
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 90,
-              child: IgnorePointer(
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 150),
-                  opacity: toastVisible ? 1 : 0,
-                  child: Center(
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 30),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 11,
-                      ),
-                      constraints: const BoxConstraints(maxWidth: 400),
-                      decoration: BoxDecoration(
-                        color: p.ink,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x40000000),
-                            offset: Offset(0, 8),
-                            blurRadius: 20,
-                          ),
-                        ],
-                      ),
-                      child: Text(
-                        toastText,
-                        textAlign: TextAlign.center,
-                        style: tx(context, 14, w: FontWeight.w700, color: p.bg),
-                      ),
-                    ),
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        // Every screen sits under a navy app bar (or a navy auth hero), so the
+        // status bar icons are light everywhere in the shell.
+        value: SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+          systemNavigationBarColor: p.stage,
+          systemNavigationBarIconBrightness: p.isDark
+              ? Brightness.light
+              : Brightness.dark,
+        ),
+        child: Scaffold(
+          backgroundColor: p.stage,
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: SafeArea(top: false, bottom: false, child: app),
+              ),
+              if (sideOpen) ..._sideOverlay(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Transient message shown inside the content area, above the dock.
+  Widget _toast(BuildContext context) {
+    final p = Pal.of(context);
+    return IgnorePointer(
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 150),
+        opacity: toastVisible ? 1 : 0,
+        child: Semantics(
+          liveRegion: true,
+          container: true,
+          child: Center(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 30),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+              constraints: const BoxConstraints(maxWidth: 400),
+              decoration: BoxDecoration(
+                color: p.ink,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x40000000),
+                    offset: Offset(0, 8),
+                    blurRadius: 20,
                   ),
-                ),
+                ],
+              ),
+              child: Text(
+                toastText,
+                textAlign: TextAlign.center,
+                style: tx(context, 14, w: FontWeight.w700, color: p.bg),
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -410,6 +478,11 @@ class _RootShellState extends State<RootShell> {
         ? AquaLogo(color: Colors.white)
         : Text(
             TITLES[name] ?? '',
+            textAlign: TextAlign.center,
+            // A long title at a large text scale must not wrap into a second
+            // line: the bar would grow and the title would drift off-centre.
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: tx(
               context,
               19,
@@ -423,28 +496,26 @@ class _RootShellState extends State<RootShell> {
     if (name != 'confirm') {
       if (appState.role == 'customer' && name != 'cart') {
         right.add(
-          _iconBtn(
-            context,
+          IconAction(
             'cart',
-            24,
-            c > 0 ? c.toString() : null,
-            'Cart',
-            () {
-              appState.goScreen('cart');
-            },
+            iconSize: 24,
+            color: Colors.white,
+            label: 'Cart',
+            pip: c > 0 ? c.toString() : null,
+            pipBorder: p.navy,
+            onTap: () => appState.goScreen('cart'),
           ),
         );
       }
       right.add(
-        _iconBtn(
-          context,
+        IconAction(
           'bell',
-          24,
-          n > 0 ? n.toString() : null,
-          'Notifications',
-          () {
-            appState.goScreen('notifs');
-          },
+          iconSize: 24,
+          color: Colors.white,
+          label: 'Notifications',
+          pip: n > 0 ? n.toString() : null,
+          pipBorder: p.navy,
+          onTap: () => appState.goScreen('notifs'),
         ),
       );
     }
@@ -454,25 +525,29 @@ class _RootShellState extends State<RootShell> {
         bottom: false,
         child: Container(
           constraints: const BoxConstraints(minHeight: 60),
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
+          // A Stack keeps the title optically centred in the window: with a Row
+          // the 44px back slot and two 44px actions pulled it off-centre.
+          child: Stack(
+            alignment: Alignment.center,
             children: [
-              Container(
-                width: 56,
-                height: 44,
+              Align(
                 alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.only(left: 8),
-                child: _iconBtn2(
-                  context,
+                child: IconAction(
                   isRoot ? 'menu' : 'back',
-                  26,
-                  isRoot ? _openSide : appState.back,
+                  iconSize: 26,
+                  color: Colors.white,
+                  label: isRoot ? 'Open navigation menu' : 'Go back',
+                  onTap: isRoot ? _openSide : appState.back,
                 ),
               ),
-              Expanded(child: Center(child: mid)),
-              // right icons
-              Row(
-                children: [for (final r in right) r, const SizedBox(width: 8)],
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 56),
+                child: mid,
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Row(mainAxisSize: MainAxisSize.min, children: right),
               ),
             ],
           ),
@@ -497,78 +572,11 @@ class _RootShellState extends State<RootShell> {
     }
   }
 
-  Widget _iconBtn(
-    BuildContext context,
-    String icon,
-    double size,
-    String? pip,
-    String label,
-    VoidCallback onTap,
-  ) {
-    final p = Pal.of(context);
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        alignment: Alignment.center,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Ic(icon, size: size, color: Colors.white),
-            if (pip != null)
-              Positioned(
-                top: -5,
-                right: -4,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5),
-                  height: 18,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: p.pip,
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(color: p.navy, width: 2),
-                  ),
-                  child: Text(
-                    pip,
-                    style: tx(
-                      context,
-                      11,
-                      w: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _iconBtn2(
-    BuildContext context,
-    String icon,
-    double size,
-    VoidCallback onTap,
-  ) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        alignment: Alignment.center,
-        child: Ic(icon, size: size, color: Colors.white),
-      ),
-    );
-  }
-
   /* ---------------- sidebar ---------------- */
 
   List<Widget> _sideOverlay() {
     if (!sideOpen) return const [];
     final p = Pal.of(context);
-    final wide = MediaQuery.of(context).size.width >= 520;
     Widget layer = Stack(
       children: [
         Positioned.fill(
@@ -594,6 +602,9 @@ class _RootShellState extends State<RootShell> {
                     appState.draft.type = appState.draft.type.isEmpty
                         ? 'refill'
                         : appState.draft.type;
+                  // Track from the menu means "where is my water now", not the
+                  // order that happened to be open last; a stale id used to win.
+                  if (v == 'track') appState.trackId = null;
                   _closeSide();
                   appState.goScreen(v, side: true);
                   appState.save();
@@ -604,20 +615,13 @@ class _RootShellState extends State<RootShell> {
         ),
       ],
     );
-    // On wide screens keep the drawer inside the phone frame instead of
-    // sliding from the far edge of the window.
-    if (wide) {
-      layer = Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 14),
-          width: 440,
-          constraints: const BoxConstraints(maxHeight: 900),
-          clipBehavior: Clip.antiAlias,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(30),
-          ),
-          child: layer,
-        ),
+    if (framedLayout(context)) {
+      layer = phoneFrame(
+        context,
+        child: layer,
+        background: p.bg,
+        border: false,
+        shadow: false,
       );
     }
     return [Positioned.fill(child: layer)];
@@ -629,7 +633,7 @@ Future<void> confirmLogoutSheet(BuildContext context) async {
   final s = appState;
   await showAquaSheet(
     context,
-    title: 'Log out of AQUA?',
+    title: 'Log out of AQUARUN?',
     body: VGap(
       [
         Text(

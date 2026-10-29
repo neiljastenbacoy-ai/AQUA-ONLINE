@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Real system notifications for AQUA order events. -->
+    <!-- Real system notifications for AQUARUN order events. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -8,8 +8,12 @@
     <!-- Live map tracking: pin drop + rider GPS. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- The rider's stream runs in a foreground service so it survives the
+         screen locking; geolocator declares that service itself. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <application
-        android:label="AQUA Water Ordering"
+        android:label="AQUARUN"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

@@ -37,14 +37,14 @@ class Pal {
     s3bg: Color(0xFFE6E3FF), s3fg: Color(0xFF4B3FC2),
     s4bg: Color(0xFFDDF5E8), s4fg: Color(0xFF107A52),
     s5bg: Color(0xFFFDE2E2), s5fg: Color(0xFFB02A2A),
-    pip: Color(0xFFFF5B4D),
+    pip: _pip,
     shadow: [BoxShadow(color: Color(0x1A0A3A8A), offset: Offset(0, 6), blurRadius: 18)],
     scrim: Color(0x85051432),
     isDark: false,
   );
 
   static const Pal dark = Pal(
-    navy: Color(0xFF082E6E), navy2: Color(0xFF0A3F96), blue: Color(0xFF2A7BEA), blueHi: Color(0xFF4B97F7),
+    navy: Color(0xFF082E6E), navy2: Color(0xFF0A3F96), blue: Color(0xFF2267D4), blueHi: Color(0xFF4B97F7),
     ice: Color(0xFF12305E), ice2: Color(0xFF18417F), card: Color(0xFF0D2144), bg: Color(0xFF071429), stage: Color(0xFF040C1A),
     ink: Color(0xFFE6F0FF), muted: Color(0xFF9AB0D4), line: Color(0xFF1C3B6C), link: Color(0xFF8FC0FF),
     ok: Color(0xFF58D6A0), danger: Color(0xFFFF8A8A),
@@ -55,7 +55,7 @@ class Pal {
     s3bg: Color(0xFF2A2660), s3fg: Color(0xFFBDB6FF),
     s4bg: Color(0xFF0F3B2B), s4fg: Color(0xFF7EE2B2),
     s5bg: Color(0xFF4A1B1B), s5fg: Color(0xFFFF9C9C),
-    pip: Color(0xFFFF5B4D),
+    pip: _pip,
     shadow: [BoxShadow(color: Color(0x59000000), offset: Offset(0, 6), blurRadius: 18)],
     scrim: Color(0xA600040E),
     isDark: true,
@@ -67,22 +67,23 @@ class Pal {
   /// `color-mix(in srgb, <c> <pct>%, transparent)` for rings like the focus halo.
   static Color mixAlpha(Color c, double alpha) => c.withValues(alpha: alpha);
 
+  /// Unread / count pip. Kept dark enough for white 11px bold text on top
+  /// (≈4.8:1); the brighter #FF5B4D only reached ≈3:1.
+  static const Color _pip = Color(0xFFD6352A);
+
   // ---- gradients -----------------------------------------------------------
+  // Filled buttons carry white labels, so both stops stay at ≈4.5:1 or darker.
   static const LinearGradient btnBlue = LinearGradient(
       begin: Alignment.topCenter, end: Alignment.bottomCenter,
-      colors: [Color(0xFF2D8DF4), Color(0xFF1565D8)]);
+      colors: [Color(0xFF1D71E0), Color(0xFF1155C8)]);
   static const LinearGradient btnGreen = LinearGradient(
       begin: Alignment.topCenter, end: Alignment.bottomCenter,
-      colors: [Color(0xFF25A26F), Color(0xFF127A55)]);
+      colors: [Color(0xFF17845A), Color(0xFF0E6647)]);
   static const LinearGradient hero = LinearGradient(
       begin: Alignment.topCenter, end: Alignment.bottomCenter,
       stops: [0, .62, 1],
       colors: [Color(0xFF0A3A8A), Color(0xFF0B4FB8), Color(0xFF1B7BE8)]);
   static const LinearGradient auth = LinearGradient(
-      begin: Alignment.topCenter, end: Alignment.bottomCenter,
-      stops: [0, .70, 1],
-      colors: [Color(0xFF0A3A8A), Color(0xFF0B4FB8), Color(0xFF1B7BE8)]);
-  static const LinearGradient splashG = LinearGradient(
       begin: Alignment.topCenter, end: Alignment.bottomCenter,
       stops: [0, .70, 1],
       colors: [Color(0xFF0A3A8A), Color(0xFF0B4FB8), Color(0xFF1B7BE8)]);
@@ -92,15 +93,5 @@ class Pal {
   static const LinearGradient avatar = LinearGradient(
       begin: Alignment.topCenter, end: Alignment.bottomCenter,
       colors: [Color(0xFF2D8DF4), Color(0xFF0B4FB8)]);
-  static const LinearGradient slide = LinearGradient(
-      begin: Alignment(-0.3, -0.6), end: Alignment(0.8, 0.8),
-      colors: [Color(0xFFEAF3FE), Color(0xFFD6E8FD)]);
-  static const LinearGradient tile1 = LinearGradient(
-      begin: Alignment.topCenter, end: Alignment.bottomCenter,
-      colors: [Color(0xFF2D8DF4), Color(0xFF1565D8)]);
+  static const LinearGradient tile1 = btnBlue;
 }
-
-/// A teal gradient used for the admin/rider availability chip strip etc.
-const LinearGradient tealBtn = LinearGradient(
-    begin: Alignment.topCenter, end: Alignment.bottomCenter,
-    colors: [Color(0xFF25A26F), Color(0xFF127A55)]);

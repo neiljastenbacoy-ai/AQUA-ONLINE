@@ -1,7 +1,7 @@
-# aqua
+# AQUARUN
 
-AQUA Water Ordering — customer, rider and admin app for a water refilling station,
-with real map tracking (OpenStreetMap, free, no API key).
+Customer, rider and admin app for a water refilling station, with real map
+tracking (OpenStreetMap, free, no API key).
 
 ## Live map tracking
 
