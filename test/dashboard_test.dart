@@ -314,6 +314,69 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('the today tiles open lists scoped to today', (tester) async {
+    final s = _adminState()
+      ..orders.addAll([
+        _order('AQ-T-1', status: 4, qty: 2), // delivered today
+        _order('AQ-Y-1', status: 4, qty: 5, shift: -1), // delivered yesterday
+        _order('AQ-T-0', status: 0), // placed today, awaiting
+        _order('AQ-Y-0', status: 0, shift: -1), // placed yesterday
+      ]);
+    await tester.pumpWidget(_screen(s, adm.adashView));
+    await tester.pump();
+
+    // Delivered tile = 1 (today only). Tap opens 'done' scoped to today.
+    await tester.tap(find.widgetWithText(StatTile, 'Delivered'));
+    await tester.pump();
+    expect(s.screen, 'aorders');
+    expect(s.atab, 'done');
+    expect(s.atoday, isTrue);
+
+    // The list the admin lands on must hold just the delivered-today order,
+    // not yesterday's, so the number on the tile and the rows agree.
+    await tester.pumpWidget(_screen(s, adm.aordersView));
+    await tester.pump();
+    expect(find.text('Showing today only'), findsOneWidget);
+    expect(find.textContaining('AQ-T-1'), findsWidgets);
+    expect(find.textContaining('AQ-Y-1'), findsNothing);
+    expect(find.textContaining('AQ-T-0'), findsNothing);
+
+    // Clearing the scope brings yesterday back.
+    await tester.tap(find.text('Show all'));
+    await tester.pump();
+    expect(s.atoday, isFalse);
+    expect(find.text('Showing today only'), findsNothing);
+    expect(find.textContaining('AQ-Y-1'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the orders-today tile opens today\'s orders, ongoing is all-time',
+      (tester) async {
+    final s = _adminState()
+      ..orders.addAll([
+        _order('AQ-T-0', status: 0),
+        _order('AQ-Y-0', status: 0, shift: -1),
+      ]);
+    await tester.pumpWidget(_screen(s, adm.adashView));
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(StatTile, 'Orders today'));
+    await tester.pump();
+    expect(s.atab, 'all');
+    expect(s.atoday, isTrue);
+
+    await tester.pumpWidget(_screen(s, adm.aordersView));
+    await tester.pump();
+    expect(find.textContaining('AQ-T-0'), findsWidgets);
+    expect(find.textContaining('AQ-Y-0'), findsNothing);
+
+    // Switching a tab is an all-time view, so it drops the today scope.
+    await tester.tap(find.textContaining('Pending ('));
+    await tester.pump();
+    expect(s.atoday, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('every dashboard fits 320dp at 1.3x text when busy',
       (tester) async {
     tester.view.physicalSize = const Size(320, 640);

@@ -546,8 +546,11 @@ Widget _orderAgain(BuildContext context, AppState s, Order o) {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: p.line),
       ),
-      child: Row(children: [
-        Ic('copy', size: 20, color: p.blue),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: Ic('copy', size: 20, color: p.blue),
+        ),
         const SizedBox(width: 10),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -559,7 +562,10 @@ Widget _orderAgain(BuildContext context, AppState s, Order o) {
                 style: tx(context, 12.5, color: p.muted, h: 1.3)),
           ]),
         ),
-        Ic('chev', size: 16, color: p.link),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Ic('chev', size: 16, color: p.link),
+        ),
       ]),
     ),
   );
@@ -646,8 +652,11 @@ Widget _activeBanner(BuildContext context, AppState s, Order o) {
               const SizedBox(height: 8),
               _statusBar(context, statusState(o)),
             ])),
-            Ic('chev', size: 18, color: p.muted),
-          ], gap: 10),
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Ic('chev', size: 18, color: p.muted),
+            ),
+          ], gap: 10, cross: CrossAxisAlignment.start),
           ),
         ),
       ),
@@ -1631,6 +1640,25 @@ ScreenView trackView(BuildContext context, AppState s) {
   }
 
   add(_trackHeadCard(context, o, st, cn));
+
+  if (!cn && st == 3 && o.arrivedAt != null) {
+    final p = Pal.of(context);
+    final r = s.riderOf(o);
+    add(AquaCard(
+      background: p.s4bg,
+      borderColor: p.s4fg,
+      child: Row(children: [
+        Ic('bell', size: 24, color: p.s4fg),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Your rider has arrived', style: tx(context, 15, w: FontWeight.w700)),
+          Text('${r != null ? 'Rider ${r.name.split(' ').first}' : 'Your rider'} is outside since '
+              '${tfmt(o.arrivedAt!)}. Please meet them at the door.',
+              style: tx(context, 13)),
+        ])),
+      ]),
+    ));
+  }
 
   // The map appears as soon as somebody owns the delivery — a rider assigned
   // while the water is still being prepared is already visible and already

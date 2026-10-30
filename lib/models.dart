@@ -97,6 +97,7 @@ class Order {
   bool byRider;
   Issue? issue;
   bool seedH;
+  int? arrivedAt; // rider reached the door (GPS or the rider's tap)
   Order({
     required this.id,
     required this.items,
@@ -118,6 +119,7 @@ class Order {
     this.byRider = false,
     this.issue,
     this.seedH = false,
+    this.arrivedAt,
   });
 
   double unitPrice(String t, double refillPrice, double buyPrice) {
@@ -155,6 +157,7 @@ class Order {
         byRider: (json['byRider'] ?? false) as bool,
         issue: json['issue'] == null ? null : Issue.fromJson(json['issue']),
         seedH: (json['seedH'] ?? false) as bool,
+        arrivedAt: (json['arrivedAt'] as num?)?.toInt(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -178,6 +181,9 @@ class Order {
         'byRider': byRider,
         'issue': issue?.toJson(),
         'seedH': seedH,
+        // Only written once set: every order already in Firestore lacks the
+        // key, and a null here would make every device rewrite every order.
+        if (arrivedAt != null) 'arrivedAt': arrivedAt,
       };
 }
 

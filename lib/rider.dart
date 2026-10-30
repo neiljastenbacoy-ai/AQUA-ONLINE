@@ -472,7 +472,10 @@ Widget _nextCard(BuildContext context, AppState s, Order? o) {
     return AquaCard(
       padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
       child: RowW([
-        Ic('check', size: 22, color: p.ok),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Ic('check', size: 22, color: p.ok),
+        ),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('No deliveries assigned',
@@ -481,7 +484,7 @@ Widget _nextCard(BuildContext context, AppState s, Order? o) {
                 style: para(context, color: p.muted, size: 13)),
           ]),
         ),
-      ]),
+      ], gap: 10, cross: CrossAxisAlignment.start),
     );
   }
   final c = s.custOf(o);
@@ -664,6 +667,7 @@ ScreenView rdetailView(BuildContext context, AppState s) {
       ),
       if (st == 4) _etaRow(context, icon: 'check', text: 'Delivered at ${tfmt(doneT)}'),
       if (st == 5) _etaRow(context, icon: 'close', text: 'This delivery was cancelled.'),
+      if (!o.cancelled && o.status == 3) _arrivalCard(context, s, o, ph),
       if (st < 4) _statusTrail(context, s, o),
       if (o.issue != null)
         card(
@@ -797,6 +801,61 @@ ScreenView rdetailView(BuildContext context, AppState s) {
       if (inlineActions.isNotEmpty) VGap(inlineActions, gap: 10),
     ]),
     dock: dock,
+  );
+}
+
+/* ---------- arrival ---------- */
+
+/// At the door. Sits right under the header while the order is on the road,
+/// so the rider never scrolls for it: one tap rings the customer's phone. GPS
+/// presses it on its own at the customer's pin; the button covers a missing or
+/// misplaced pin and a phone with location off. Once sent it turns into a
+/// receipt, one "Notify Again" for a customer who has not come out, and then
+/// the call button.
+Widget _arrivalCard(BuildContext context, AppState s, Order o, String ph) {
+  final p = Pal.of(context);
+  final first = s.custOf(o).name.split(' ').first;
+  if (o.arrivedAt == null) {
+    return card(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        RowW([
+          Ic('bell', size: 22, color: p.blue),
+          Expanded(
+            child: Text('At $first\'s place? Let them know you\'re outside.',
+                style: tx(context, 14, h: 1.35)),
+          ),
+        ], gap: 10),
+        const SizedBox(height: 10),
+        Btn('Notify Customer: I\'ve Arrived',
+            icon: 'bell', onPressed: () => s.riderArrived(o.id)),
+      ]),
+    );
+  }
+  final again = !s.nudged.contains(o.id);
+  return card(
+    background: p.s4bg,
+    borderColor: p.s4fg,
+    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      RowW([
+        Ic('check', size: 22, color: p.s4fg),
+        Expanded(
+          child: Text(
+              again
+                  ? 'Customer notified you arrived at ${tfmt(o.arrivedAt!)}'
+                  : 'Customer notified twice. Call them if they still haven\'t come out.',
+              style: tx(context, 14, w: FontWeight.w700, h: 1.35)),
+        ),
+      ], gap: 10),
+      if (again) ...[
+        const SizedBox(height: 10),
+        Btn('Notify Again', icon: 'bell', kind: BtnKind.alt,
+            onPressed: () => s.riderNudge(o.id)),
+      ] else if (ph.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        Btn('Call Customer', icon: 'phone', kind: BtnKind.alt,
+            onPressed: () => launchUrl(Uri.parse('tel:$ph'))),
+      ],
+    ]),
   );
 }
 
@@ -1162,6 +1221,16 @@ Widget _routeStopCard(BuildContext context, AppState s, Order o, int n) {
         spacing: 8,
         runSpacing: 8,
         children: [
+          // On the road and not yet announced: the stop card carries the same
+          // one-tap arrival as the delivery screen, so the rider can send it
+          // straight from the map.
+          if (!o.cancelled && o.status == 3 && o.arrivedAt == null)
+            Btn('I\'ve Arrived',
+                small: true,
+                icon: 'bell',
+                iconSize: 18,
+                kind: BtnKind.green,
+                onPressed: () => s.riderArrived(o.id)),
           Btn('Directions',
               small: true,
               icon: 'send',

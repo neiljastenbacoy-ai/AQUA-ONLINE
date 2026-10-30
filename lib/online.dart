@@ -62,6 +62,20 @@ List<Notif> mergeNotifs(Iterable<Notif> a, Iterable<Notif> b, {int cap = 120}) {
   return list;
 }
 
+/// Notes in the customer's cloud inbox that this phone has never seen — the
+/// ones another device (the rider's, the station's) wrote. Those must ring the
+/// phone; notes this phone made itself already rang when they were made.
+/// Old or already-read notes stay quiet: a phone signing in should not replay
+/// yesterday's deliveries as a burst of alerts.
+List<Notif> cloudOnlyNotifs(Iterable<Notif> remote, Iterable<Notif> local,
+    {required int now, int maxAgeMs = 15 * 60 * 1000}) {
+  final seen = <String>{for (final n in local) n.id};
+  return [
+    for (final n in remote)
+      if (!seen.contains(n.id) && !n.read && now - n.ts <= maxAgeMs) n,
+  ]..sort((a, b) => a.ts.compareTo(b.ts));
+}
+
 class OnlineSync {
   static final OnlineSync i = OnlineSync._();
   OnlineSync._();
@@ -320,14 +334,33 @@ class OnlineSync {
       if (_s.seq < _highWater()) _s.seq = _highWater();
       // Union, not replace: this device may be holding a note it has not pushed
       // yet, and a note the other phone wrote has to survive here too.
-      _s.anotifs = mergeNotifs(
-          ((d['anotifs'] ?? []) as List).map((x) => Notif.fromJson(x)),
-          _s.anotifs,
-          cap: 60);
-      _s.rnotifs = mergeNotifs(
-          ((d['rnotifs'] ?? []) as List).map((x) => Notif.fromJson(x)),
-          _s.rnotifs);
+      final remoteA =
+          ((d['anotifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
+      final remoteR =
+          ((d['rnotifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
+      // A note another device just wrote into the shared admin/rider inbox must
+      // ring here too, the way the customer's own inbox rings in [_applyMe]:
+      // only fresh, unread, recent notes this phone has not already seen. A
+      // rider rings only for their own assignments. Both sets are computed
+      // before the merge, while the local copy is still the "seen" reference.
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final freshA = _s.role == 'admin'
+          ? cloudOnlyNotifs(remoteA, _s.anotifs, now: nowMs)
+          : const <Notif>[];
+      final freshR = _s.role == 'rider' && _s.rider != null
+          ? cloudOnlyNotifs(remoteR, _s.rnotifs, now: nowMs)
+              .where((n) => n.rid == _s.rider!.id)
+              .toList()
+          : const <Notif>[];
+      _s.anotifs = mergeNotifs(remoteA, _s.anotifs, cap: 60);
+      _s.rnotifs = mergeNotifs(remoteR, _s.rnotifs);
       _s.updateUI();
+      for (final n in freshA) {
+        _s.ringFromCloud(n);
+      }
+      for (final n in freshR) {
+        _s.ringFromCloud(n);
+      }
     } catch (e) {
       debugPrint('[AQUARUN sync] world apply failed: $e');
     }
@@ -429,13 +462,14 @@ class OnlineSync {
       // Union, not replace: a note the rider sent can land here while this
       // device is still holding its own copy, and losing it would mean the
       // customer never hears that their water moved.
-      _s.notifs = mergeNotifs(
-          ((d['notifs'] ?? []) as List).map((x) => Notif.fromJson(x)),
-          _s.notifs,
-          cap: 60);
+      final remote = ((d['notifs'] ?? []) as List).map((x) => Notif.fromJson(x)).toList();
+      final fresh = cloudOnlyNotifs(remote, _s.notifs,
+          now: DateTime.now().millisecondsSinceEpoch);
+      _s.notifs = mergeNotifs(remote, _s.notifs, cap: 60);
       final remoteName = (d['name'] ?? '') as String;
       if (remoteName.isNotEmpty) _s.user!.name = remoteName;
       _s.updateUI();
+      fresh.forEach(_s.ringFromCloud);
     } catch (e) {
       debugPrint('[AQUARUN sync] user apply failed: $e');
     }

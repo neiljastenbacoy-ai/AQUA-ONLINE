@@ -1307,8 +1307,15 @@ class ActionRow extends StatelessWidget {
               ),
             ),
             child: Row(
+              // The title + sub wrap to two lines; centering the icon against
+              // that block floats it between the lines. Top-align it (with a
+              // hair of padding) so it sits on the title's first line instead.
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Ic(icon, size: 20, color: accent),
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Ic(icon, size: 20, color: accent),
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -1331,11 +1338,17 @@ class ActionRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  verb,
-                  style: tx(context, 12.5, w: FontWeight.w800, color: p.link),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    verb,
+                    style: tx(context, 12.5, w: FontWeight.w800, color: p.link),
+                  ),
                 ),
-                Ic('chev', size: 16, color: p.link),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Ic('chev', size: 16, color: p.link),
+                ),
               ],
             ),
           ),
@@ -1605,11 +1618,19 @@ class RowBtn extends StatelessWidget {
           border: Border.all(color: p.line),
         ),
         child: Row(
+          // Same as ActionRow: the title/value block is two lines, so the
+          // leading icon and the trailing chevron top-align to the first line
+          // rather than drifting to the middle of the pair.
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Ic(icon, size: 22, color: p.blue),
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Ic(icon, size: 22, color: p.blue),
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: Column(
@@ -1630,7 +1651,10 @@ class RowBtn extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Ic('chev', size: 20, color: p.muted),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Ic('chev', size: 20, color: p.muted),
+                  ),
                 ],
               ),
             ),

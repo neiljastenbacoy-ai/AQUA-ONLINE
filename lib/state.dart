@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:collection/collection.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'constants.dart';
@@ -69,6 +70,9 @@ class AppState extends ChangeNotifier {
   String atab = 'all';
   String asort = 'new';
   String atype = 'all';
+  // Transient "today only" scope set by the dashboard's today tiles so the
+  // list opened matches the today count shown on the tile. Never persisted.
+  bool atoday = false;
   String autab = 'riders';
   String areport = '7d';
   String? aid;
@@ -300,6 +304,18 @@ class AppState extends ChangeNotifier {
   }
 
   int unread() => notifList().where((n) => !n.read).length;
+
+  /// A note another device dropped into this role's inbox (the rider moved the
+  /// order, the station assigned a delivery, a customer placed an order). Notes
+  /// made on this phone already rang in [addNotif]/[addANotif]/[addRNotif];
+  /// these arrive through the sync and have to ring here, or the user only finds
+  /// out by opening the app. Callers have already filtered to this role's own
+  /// inbox (and a rider to their own assignments), so here we only respect the
+  /// login state and the recipient's own alerts switch.
+  void ringFromCloud(Notif n) {
+    if (session != true || !settings.notify) return;
+    PhoneNotify.push(n.title, n.body);
+  }
 
   void addNotif({String type = 'info', String title = '', String body = '', String? orderId, List<Notif>? into, String? rid}) {
     if (!settings.notify) return;
@@ -552,7 +568,9 @@ class AppState extends ChangeNotifier {
   /// another device. The customer's own app is the only writer of its
   /// document, except for this: the note has to be left in their inbox.
   void _notifyCustomerElsewhere(Order o, String title, String body) {
-    if (!settings.notify) return;
+    // No `settings.notify` check here: that switch is this phone's own alerts.
+    // A rider who silenced their phone must not silence the customer's — the
+    // customer's app decides whether its own phone rings.
     final email = o.owner;
     if (email == null || !email.contains('@')) return;
     OnlineSync.i.notifyCustomer(
@@ -996,6 +1014,9 @@ class AppState extends ChangeNotifier {
       return;
     }
     final id = active.first.id;
+    // Every GPS fix is checked against the door of each run on the road, so
+    // the customer is told the rider is outside without anybody tapping.
+    b.onFix = checkArrival;
     if (!b.running) {
       b.start(riderId: riderId, orderId: id);
     } else {
@@ -1034,6 +1055,60 @@ class AppState extends ChangeNotifier {
     }
     notifyListeners();
     toast('Marked as ${BADGE[n]}');
+  }
+
+  /// How close (metres) the rider's GPS has to be to the customer's pin before
+  /// the customer is told the rider is outside. Phone GPS drifts 10–30 m and a
+  /// customer's pin is dropped by hand, so the door is a circle, not a point.
+  static const double arriveRadius = 100;
+
+  /// The rider is at the door: tell the customer once, on their phone. Fired by
+  /// the rider's GPS crossing [arriveRadius] or by the rider's own tap — the tap
+  /// covers an order with no pin or a pin dropped on the wrong street. Only
+  /// meaningful while the order is out for delivery; it never moves the stage.
+  bool riderArrived(String id, {bool auto = false}) {
+    final o = orders.where((x) => x.id == id).firstOrNull;
+    if (o == null || o.cancelled || o.status != 3 || o.arrivedAt != null) return false;
+    o.arrivedAt = DateTime.now().millisecondsSinceEpoch;
+    final r = riderOf(o);
+    final who = r != null ? 'Rider ${r.name.split(' ').first}' : 'Your rider';
+    customerNote(o, 'Your rider has arrived',
+        '$who is outside with order ${o.id}. Please meet them at the door.');
+    save();
+    notifyListeners();
+    toast(auto ? 'You are at ${custOf(o).name.split(' ').first}\'s pin — customer notified' : 'Customer notified that you have arrived');
+    return true;
+  }
+
+  /// Orders whose customer already got the second, "still waiting" ring.
+  final Set<String> nudged = {};
+
+  /// The customer has not come out: ring their phone one more time. Once only
+  /// — after that the rider calls, which the delivery screen offers next.
+  bool riderNudge(String id) {
+    final o = orders.where((x) => x.id == id).firstOrNull;
+    if (o == null || o.cancelled || o.status != 3 || o.arrivedAt == null) return false;
+    if (nudged.contains(id)) return false;
+    nudged.add(id);
+    final r = riderOf(o);
+    final who = r != null ? 'Rider ${r.name.split(' ').first}' : 'Your rider';
+    customerNote(o, 'Your rider is still waiting',
+        '$who is waiting outside with order ${o.id}. Please come to the door.');
+    notifyListeners();
+    toast('Customer notified again');
+    return true;
+  }
+
+  /// One GPS fix from this rider's phone. Any run on the road whose pin is
+  /// within [arriveRadius] gets its arrival note.
+  void checkArrival(double lat, double lng) {
+    if (role != 'rider' || riderId.isEmpty) return;
+    for (final o in orders.toList()) {
+      if (o.riderId != riderId || o.cancelled || o.status != 3) continue;
+      if (o.arrivedAt != null || !o.address.hasPin) continue;
+      final d = Geolocator.distanceBetween(lat, lng, o.address.lat!, o.address.lng!);
+      if (d <= arriveRadius) riderArrived(o.id, auto: true);
+    }
   }
 
   void riderAvailableTo(String v) {

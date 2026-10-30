@@ -457,6 +457,7 @@ ScreenView adashView(BuildContext context, AppState s) {
             fg: p.blue,
             onTap: () {
               s.atab = 'all';
+              s.atoday = true; // the list shows today's orders, like the tile
               s.goScreen('aorders');
             }),
         StatTile(
@@ -467,6 +468,7 @@ ScreenView adashView(BuildContext context, AppState s) {
             fg: p.peachFg,
             onTap: () {
               s.atab = 'delivery';
+              s.atoday = false; // ongoing is everything on the road, any day
               s.goScreen('aorders');
             }),
         StatTile(
@@ -477,6 +479,7 @@ ScreenView adashView(BuildContext context, AppState s) {
             fg: p.mintFg,
             onTap: () {
               s.atab = 'done';
+              s.atoday = true; // delivered today, matching the tile
               s.goScreen('aorders');
             }),
         StatTile(
@@ -487,8 +490,10 @@ ScreenView adashView(BuildContext context, AppState s) {
             fg: p.s3fg,
             onTap: () => s.goScreen('areports')),
       ]),
-      SectionRow('Recent Orders',
-          action: 'View All', onTap: () => s.goScreen('aorders')),
+      SectionRow('Recent Orders', action: 'View All', onTap: () {
+        s.atoday = false; // "View All" means all of them, not today's
+        s.goScreen('aorders');
+      }),
       if (recent3.isNotEmpty)
         ...recent3.map((o) => _acard(context, s, o))
       else
@@ -659,8 +664,18 @@ ScreenView aordersView(BuildContext context, AppState s) {
   final chipsOn = s.atype != 'all' || s.asort != 'new';
 
   final q = s.aq.trim().toLowerCase();
+  final nowMs = _nowMs();
   final l = s.orders.where((o) {
     if (!_amatch(o, s.atab)) return false;
+    // Today scope: the dashboard's today tiles land here, so the list must
+    // show exactly what the tile counted. Delivered orders are scoped by the
+    // time they finished; every other tile by when they were placed. A
+    // cancelled order is never a "today" figure, so it drops out here too.
+    if (s.atoday) {
+      if (o.cancelled) return false;
+      final ref = s.atab == 'done' ? _doneAt(o) : o.createdAt;
+      if (ref < sod(nowMs)) return false;
+    }
     if (s.atype != 'all' && !o.items.any((i) => i.type == s.atype)) return false;
     if (q.isEmpty) return true;
     final c = s.custOf(o);
@@ -674,6 +689,32 @@ ScreenView aordersView(BuildContext context, AppState s) {
 
   return ScreenView(content: 
     PadScroll(children: [
+      if (s.atoday)
+        TapSurface(
+          onTap: () {
+            s.atoday = false;
+            s.save();
+            s.updateUI();
+          },
+          semanticLabel: 'Show all dates',
+          semanticButton: false,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+                color: p.ice, borderRadius: BorderRadius.circular(12)),
+            child: RowW([
+              Ic('clock', size: 16, color: p.blue),
+              Expanded(
+                  child: Text('Showing today only',
+                      style: tx(context, 13, w: FontWeight.w700, color: p.blue))),
+              Text('Show all',
+                  style: tx(context, 12.5, w: FontWeight.w800, color: p.link)),
+              Ic('close', size: 15, color: p.link),
+            ], gap: 8),
+          ),
+        ),
       FilterChips(
         items: [
           for (final x in tabs)
@@ -682,6 +723,7 @@ ScreenView aordersView(BuildContext context, AppState s) {
         value: s.atab,
         onSelect: (v) {
           s.atab = v;
+          s.atoday = false; // a tab is an all-time view; drop the today scope
           s.save();
           s.updateUI();
         },
@@ -886,7 +928,10 @@ ScreenView adetailView(BuildContext context, AppState s) {
           msg: '',
           action: SizedBox(
               width: 240,
-              child: Btn('Orders', onPressed: () => s.goScreen('aorders'))),
+              child: Btn('Orders', onPressed: () {
+                s.atoday = false;
+                s.goScreen('aorders');
+              })),
         ),
       ]),
     );

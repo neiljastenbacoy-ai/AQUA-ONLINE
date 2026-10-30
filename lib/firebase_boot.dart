@@ -101,6 +101,19 @@ class RiderLocationBroadcaster {
 
   bool get running => _riderId != null;
 
+  /// Called with every fresh GPS fix on this phone — the app uses it to spot
+  /// the rider reaching a customer's pin.
+  void Function(double lat, double lng)? onFix;
+
+  void _fix(Position p) {
+    _last = p;
+    try {
+      onFix?.call(p.latitude, p.longitude);
+    } catch (e) {
+      debugPrint('[AQUARUN tracking] arrival check failed: $e');
+    }
+  }
+
   void start({required String riderId, String? orderId}) {
     if (!_ready || riderId.isEmpty) return;
     _orderId = orderId;
@@ -156,7 +169,7 @@ class RiderLocationBroadcaster {
           timeLimit: Duration(seconds: 8),
         ));
         if (_riderId == null) return; // stopped while we were asking
-        _last = now;
+        _fix(now);
         await _push();
       } catch (_) {/* no cached fix — the stream below will supply one */}
       if (_riderId == null) return;
@@ -180,7 +193,7 @@ class RiderLocationBroadcaster {
           ),
         ),
       ).listen(
-        (p) => _last = p,
+        _fix,
         onError: (e) {
           debugPrint('[AQUARUN tracking] GPS stream error: $e');
           _gps?.cancel();
